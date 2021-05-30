@@ -1,0 +1,3 @@
+Salloc gpu and launch program
+
+salloc -C gpu -q interactive -t 5 -c 10 -G 1 -A mp309 srun -N 1 -n 1 ./laccuda $SCRATCH/my_datasets/smaller/tiny.txt
