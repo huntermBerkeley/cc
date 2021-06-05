@@ -9,6 +9,7 @@
 #include <iostream>
 #include <vector>
 #include <assert.h>
+#include <fstream>
 //Init cuda here
 
 
@@ -413,7 +414,7 @@ __global__ void copy_kernel_char(char * to_copy, char* items, size_t n) {
 
 //After the conditional hooking step, we should push any updated reads into the contigs
 //because this happens first, the len of the contigs must be 1
-__global__ void update_leads(uint64_t nnz, char * contigs, uint64_t * contig_lens, uint64_t num_updates, char * updates,  uint64_t * update_lens){
+__global__ void update_leads(uint64_t nnz, char * contigs, uint64_t * contig_lens, uint64_t num_updates, char * updates, uint64_t * update_lens, uint64_t * parent){
 
   uint64_t tid = threadIdx.x +  blockIdx.x*blockDim.x;
 
@@ -979,7 +980,7 @@ uint64_t * old_cc(uint64_t nnz, uint64_t* Arows, uint64_t* Acols, char* Avals){
 }
 
 
-void cc(uint64_t nnz, uint64_t num_vert, uint64_t* Arows, uint64_t* Acols, char* Avals, std::vector<uint64_t> outputRows){
+void cc(uint64_t nnz, uint64_t num_vert, uint64_t* Arows, uint64_t* Acols, char* Avals, std::vector<uint64_t> outputRows, uint64_t maxOut, char*kmerVals, uint64_t*kmerLens, uint64_t * kmerParents){
 
 
   uint64_t blocknums = (nnz -1)/1024 + 1;
@@ -1047,6 +1048,10 @@ void cc(uint64_t nnz, uint64_t num_vert, uint64_t* Arows, uint64_t* Acols, char*
   //start with conditional hook
   //this encodes the connections between vertices
   naive_uncond_hook<<<blocknums, 1024>>>(nnz, Arows, Acols, Avals, parents, stars);
+
+
+  //after unconditional hook, we need to add back in the starts so that the final items aren't one kmer short
+  update_leads<<<blocknums, 1024>>>(nnz, contigs, contig_lens, maxOut, kmerVals, kmerLens, kmerParents);
 
   //printf("Before\n");
   //printCudaVec(num_vert, parents);
@@ -1119,7 +1124,21 @@ void cc(uint64_t nnz, uint64_t num_vert, uint64_t* Arows, uint64_t* Acols, char*
     printrowkern(outputRows.at(i), contigs, contig_lens);
   }
 
-  //allocate new vectors
+  //time to write to output
+  std::ofstream fout;
+  fout.open("output.dat");
+
+  for (int i = 0; i < outputRows.size(); i++){
+
+    uint64_t row = outputRows.at(i);
+    cout << "len: " << contig_lens[row] << endl;
+    for (uint64_t j = 0; j < contig_lens[row]; j++){
+      fout << contigs[i*MAX_VEC+j];
+    }
+    fout << endl;
+
+  }
+  fout.close();
 
   //parents are converged
   cudaFree(old_parents);

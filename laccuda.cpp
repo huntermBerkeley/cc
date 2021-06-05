@@ -346,20 +346,35 @@ int main(int argc, char** argv) {
     //NEW: Prep outKmers as a trio of vals to be passed in
     uint64_t maxOut = outKmers.size();
 
-    char * kmersVals;
-    uint64_t * kmersLens;
+    char * kmerVals;
+    uint64_t * kmerLens;
+    uint64_t * kmerParents;
 
-    cudaMallocManaged((void **)&kmersVals,maxOut*MAX_VEC*sizeof(char));
+    cudaMallocManaged((void **)&kmerVals,maxOut*MAX_VEC*sizeof(char));
 
-    cudaMallocManaged((void **)&kmersLens,maxOut*sizeof(uint64_t));
+    cudaMallocManaged((void **)&kmerLens,maxOut*sizeof(uint64_t));
+
+    cudaMallocManaged((void **)&kmerParents,maxOut*sizeof(uint64_t));
+
 
     //iterate through maxKmers
 
-    for(int i=0; i < maxKmers.size(); i++){
+    for(int i=0; i < outKmers.size(); i++){
 
-      pkmer_t kmer = maxKmers.at(i);
-      for(int j=0; j < kmer.get().size() )
-      maxKmers.at(i).kmer.get(i);
+      pkmer_t kmer = outKmers.at(i).kmer;
+      for(int j=0; j < kmer.get().size(); j++){
+
+        //index into the results
+        kmerVals[i*MAX_VEC+j] = kmer.get()[j];
+
+
+
+      }
+      kmerLens[i] = kmer.get().size();
+
+      //set parent via cond hook
+      kmerParents[i] = map.at(kmer.hash());
+
 
     }
 
@@ -367,7 +382,7 @@ int main(int argc, char** argv) {
 
 
     //fun flips
-    cc(nnz, num_vert, matRowsCuda, matColsCuda, matValsCuda, outRows);
+    cc(nnz, num_vert, matRowsCuda, matColsCuda, matValsCuda, outRows, maxOut, kmerVals, kmerLens, kmerParents);
 
 
     //passing  along kmers is a shitshow
@@ -386,12 +401,6 @@ int main(int argc, char** argv) {
 
     //printLens(nnz, lenOutLocal);
 
-    std::cout << "This is on the laccuda side:" << std::endl;
-
-    //this segaults, repair by passing pkmer_t info to kernels and pass in strings
-    // for (int i =0; i < outRows.size(); i++){
-    //   printrow(outRows.at(i), contigs, contig_lens);
-    // }
 
 
     std::cout << "Filled matrix of " << nnz << " items in " << duration << " microseconds"  << endl;
