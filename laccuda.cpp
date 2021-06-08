@@ -38,7 +38,7 @@
 // }
 
 #ifndef MAX_VEC
-#define MAX_VEC 4000
+#define MAX_VEC 5000
 #endif
 
 using namespace std;

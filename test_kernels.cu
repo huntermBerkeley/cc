@@ -27,7 +27,7 @@
 typedef unsigned long long int uint64_cu;
 
 #ifndef MAX_VEC
-#define MAX_VEC 4000
+#define MAX_VEC 5000
 #endif
 
 //credit to stackoverflow
@@ -35,26 +35,26 @@ typedef unsigned long long int uint64_cu;
 
 using namespace std;
 
-__device__ static inline char atomicCAS(char* address, char expected, char desired) {
-    size_t long_address_modulo = (size_t) address & 3;
-    auto* base_address = (unsigned int*) ((char*) address - long_address_modulo);
-    unsigned int selectors[] = {0x3214, 0x3240, 0x3410, 0x4210};
-
-    unsigned int sel = selectors[long_address_modulo];
-    unsigned int long_old, long_assumed, long_val, replacement;
-    char old;
-
-    long_val = (unsigned int) desired;
-    long_old = *base_address;
-    do {
-        long_assumed = long_old;
-        replacement = __byte_perm(long_old, long_val, sel);
-        long_old = atomicCAS(base_address, long_assumed, replacement);
-        old = (char) ((long_old >> (long_address_modulo * 8)) & 0x000000ff);
-    } while (expected == old && long_assumed != long_old);
-
-    return old;
-}
+// __device__ static inline char atomicCAS(char* address, char expected, char desired) {
+//     size_t long_address_modulo = (size_t) address & 3;
+//     auto* base_address = (unsigned int*) ((char*) address - long_address_modulo);
+//     unsigned int selectors[] = {0x3214, 0x3240, 0x3410, 0x4210};
+//
+//     unsigned int sel = selectors[long_address_modulo];
+//     unsigned int long_old, long_assumed, long_val, replacement;
+//     char old;
+//
+//     long_val = (unsigned int) desired;
+//     long_old = *base_address;
+//     do {
+//         long_assumed = long_old;
+//         replacement =  __byte_perm(long_old, long_val, sel);
+//         long_old = atomicCAS(base_address, long_assumed, replacement);
+//         old = (char) ((long_old >> (long_address_modulo * 8)) & 0x000000ff);
+//     } while (expected == old && long_assumed != long_old);
+//
+//     return old;
+// }
 
 void printrowkern(uint64_t row, char * vec, uint64_t*lengths){
 
@@ -354,30 +354,30 @@ __global__ void init_contigs(uint64_t nnz, uint64_t num_vert, uint64_t* Arows, u
 
 
 
-__device__ char semiring_multiply(char a, char b){
+// __device__ char semiring_multiply(char a, char b){
+//
+//   printf("Multiplying %c, %c\n", a,b);
+//   if (a == 'z' ||  b == 'z')
+//     return 'z';
+//
+//   if (a == 0x20) return b;
+//
+//   return a;
+// }
 
-  printf("Multiplying %c, %c\n", a,b);
-  if (a == 'z' ||  b == 'z')
-    return 'z';
-
-  if (a == 0x20) return b;
-
-  return a;
-}
-
-__device__ char semiring_add(char a, char b){
-
-  printf("adding %c, %c\n", a,b);
-  if (a == 0x20){
-    return b;
-  }
-  if (b == 0x20){
-    return a;
-  }
-  //both nonzero, bad path
-  //this will corrupt any future adds to this index as well
-  return 'z';
-}
+// __device__ char semiring_add(char a, char b){
+//
+//   printf("adding %c, %c\n", a,b);
+//   if (a == 0x20){
+//     return b;
+//   }
+//   if (b == 0x20){
+//     return a;
+//   }
+//   //both nonzero, bad path
+//   //this will corrupt any future adds to this index as well
+//   return 'z';
+// }
 
 __global__ void copy_kernel(double * to_copy, double* items, size_t n) {
   int tid = threadIdx.x +  blockIdx.x*blockDim.x;
@@ -428,11 +428,15 @@ __global__ void update_leads(uint64_t nnz, char * contigs, uint64_t * contig_len
   contig_lens[contig_index] += update_lens[tid];
 
   //move the first intem back to the last index in preparation for the copy kernel
+  //0th index to
+
+  //was a -1 on the left
+  //lets split this into parts
   contigs[MAX_VEC*contig_index+contig_lens[contig_index]-1] = contigs[MAX_VEC*contig_index];
 
 
   //copy kernel moved from cc
-  for (int i = 0; i < contig_lens[contig_index]; i++){
+  for (int i = 0; i < contig_lens[contig_index]-1; i++){
 
     contigs[MAX_VEC*contig_index+i] = updates[MAX_VEC*tid+i];
 
@@ -443,114 +447,7 @@ __global__ void update_leads(uint64_t nnz, char * contigs, uint64_t * contig_len
 
 }
 
-//kernel to fill the matrix with random values - every row gets one item, and a col that is 10+ my row number
-//this sparse matrix loops 10x
-__global__  void fill_matrix(int nnz, int* vals, int*rows, int*cols){
 
-  int tid = threadIdx.x +  blockIdx.x*blockDim.x;
-
-  if (tid < nnz){
-    vals[tid]  = 1;
-    cols[tid] = tid;
-    rows[tid] = ( tid+10 ) % nnz;
-  }
-
-}
-
-
-//assume dataset is cleaned to have no columns with more than 1 value
-//when this is the case you don't need memory checks
-__global__ void multiply_semiring(uint64_t matNonZeros, char* matVals, uint64_t*matRows, uint64_t*matCols, char* vecB, uint64_t* vecLens, char* output, uint64_t * outLens){
-
-
-  uint64_t tid = threadIdx.x + blockIdx.x * blockDim.x;
-
-  if (tid >= matNonZeros) return;
-
-
-  //look into a and get my col index
-  uint64_t my_col  =  matCols[tid];
-  uint64_t my_row = matRows[tid];
-  char my_val = matVals[tid];
-
-  char* my_vec = vecB + my_col*MAX_VEC;
-  uint64_t my_vec_len = vecLens[my_col];
-  uint64_t new_len = my_vec_len+1;
-
-
-  if (my_row == 75){
-    printf("Tid %" PRIu64 " reporting\n", tid);
-    printf("Row %" PRIu64 "\n", my_row);
-    printf("Col %" PRIu64 "\n", my_col);
-    printf("Val %c\n", my_val);
-    printf("New len %" PRIu64 "\n",new_len);
-  }
-
-  //printf("Value %d,%d: %s reporting with new len %d\n", my_row,my_col,my_val, new_len);
-
-  //terminate call, no need to retreive
-
-
-  //who cares, we are erasing -- probably clean this up
-  char* my_output = output + my_row*MAX_VEC;
-  //uint64_t my_old_len = outLens[my_row];
-
-  //if no item, terminate
-  //will these ever be called?
-  //no
-  //e for exit lmao
-
-
-  //grab lock here - keep swapping in one while
-  // uint64_t old = 0;
-  // do {
-  //   old = atomicExch(locks+my_row, 1);
-  // } while (old != 0);
-
-  outLens[my_row] = new_len;
-
-  // if (my_row == 2832){
-  //     printf("Outlen %" PRIu64 "\n",outLens[my_row]);
-  // }
-
-  //copy values, ask about faster method
-  for (uint64_t i = 0; i < my_vec_len; i++){
-    my_output[i] = my_vec[i];
-  }
-  //and replace old length
-  my_output[my_vec_len] = my_val;
-
-  //replace lock
-  //old = atomicExch(locks+my_row, 0);
-
-
-}
-
-__global__ void multiply_kernel(int matNonZeros, int* matVals, int* matRows, int* matCols, int* vecB, int * output){
-
-
-  int tid = threadIdx.x + blockIdx.x * blockDim.x;
-
-  if (tid >= matNonZeros) return;
-
-  //look into a and get my col index
-  int my_col  =  matCols[tid];
-  int my_row = matRows[tid];
-  int my_val = matVals[tid];
-  int my_vec = vecB[my_col];
-  int old = output[my_row];
-  int assumed;
-
-  //prep my value and cas
-  int my_output =  my_val * my_vec;
-
-  do {
-    assumed = old;
-    old = atomicCAS(output + my_row, assumed, my_output+assumed);
-
-  } while (assumed != old);
-
-}
 
 __global__ void vec_kernel(int nnz, int* vec){
   int tid = threadIdx.x +  blockIdx.x * blockDim.x;
@@ -573,59 +470,8 @@ __global__ void clear_kernel(int nnz, char*vec){
 
 }
 
-__device__ void reduce_recursive(uint64_t* x, size_t n) {
-  size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
-
-  size_t k = n/2;
 
 
-
-  // TODO: Write reduction implementation here.
-  if (tid < k && tid+k < n){
-    //sum
-    //printf("Val: %d\n", x[tid]);
-    x[tid] = max(x[tid],x[tid+k]);
-  }
-
-  //sync threads
-  __syncthreads();
-
-  if (k == 1){
-    return;
-  }
-  reduce_recursive(x, k);
-
-
-}
-
-__global__ void reduce(uint64_t* x, size_t n) {
-  reduce_recursive(x, n);
-}
-
-__device__ void reduce_parents_recursive(uint64_t* x, size_t n) {
-  size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
-
-  size_t k = n/2;
-
-
-
-  // TODO: Write reduction implementation here.
-  if (tid < k && tid+k < n){
-    //sum
-    //printf("Val: %d\n", x[tid]);
-    x[tid] = x[tid] + x[tid+k];
-  }
-
-  //sync threads
-  __syncthreads();
-
-  if (k == 1){
-    return;
-  }
-  reduce_recursive(x, k);
-
-
-}
 
 __global__ void check_stars(uint64_t nnz,  bool * stars, int* converged){
 
@@ -648,41 +494,15 @@ __global__ void check_stars(uint64_t nnz,  bool * stars, int* converged){
 
 }
 
-//replace old parent with comparison
-__device__ void overwrite_old_parents(uint64_t* new_parents, uint64_t* old_parents, size_t n){
 
-  size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
 
-  if (tid < n){
-
-    uint64_t old_p = old_parents[tid];
-    uint64_t new_p = new_parents[tid];
-
-    if (new_p==old_p){
-      //set to zero - if sum is zero all are equal
-      old_parents[tid] = 0;
-    } else {
-      old_parents[tid] = 1;
-    }
-  }
-
-}
-
-__global__ void reduce_parents(uint64_t* new_parents, uint64_t* old_parents, size_t n) {
-
-  overwrite_old_parents(new_parents, old_parents,  n);
-
-  //parents are set, `reduce`
-  reduce_parents_recursive(old_parents, n);
-}
-
-void  fill_wrapper(int nnz, int*vals, int*rows, int*cols){
-
-  int blocknums  = (nnz - 1)/ 1024 + 1;
-
-  fill_matrix<<<blocknums, 1024>>>(nnz, vals,rows,cols);
-
-}
+// void  fill_wrapper(int nnz, int*vals, int*rows, int*cols){
+//
+//   int blocknums  = (nnz - 1)/ 1024 + 1;
+//
+//   fill_matrix<<<blocknums, 1024>>>(nnz, vals,rows,cols);
+//
+// }
 
 void copy_wrapper(double * to_copy, double* items, size_t n){
 
@@ -724,49 +544,9 @@ void  fill_vector(int nnz, int*vector){
 
 }
 
-void spmv(int nnz, int* matVals, int* matRows, int* matCols, int* vecB, int * output){
-
-  int blocknums  = (nnz - 1)/ 1024 + 1;
-  multiply_kernel<<<blocknums, 1024>>>(nnz, matVals, matRows, matCols, vecB, output);
 
 
-}
 
-void semiring_spmv(uint64_t nnz, char* matVals, uint64_t* matRows, uint64_t* matCols, char* vecB, uint64_t* vecLens, char * output, uint64_t* outLens){
-  uint64_t blocknums = (nnz -1)/1024 + 1;
-
-  //dummy kernel to copy over results to assert that cuda is working
-  //copy_kernel_char<<<blocknums, 1024>>>(output, matVals, nnz);
-  multiply_semiring<<<blocknums, 1024>>>(nnz, matVals, matRows, matCols, vecB, vecLens, output, outLens);
-
-  cudaDeviceSynchronize();
-}
-
-//given an array of lengths, return the largest
-//use cuda reduction, stay on machine
-uint64_t arr_max(uint64_t* lens, uint64_t n){
-
-  int blocknums = (n -1)/1024 + 1;
-
-  uint64_t * tempLens;
-  cudaMalloc((void ** )&tempLens, n*sizeof(uint64_t));
-
-  //copy over to temp vector
-  uint_copy_kernel<<<blocknums, 1024>>>(tempLens, lens, n);
-
-  //printf("Entering reduce\n");
-  //and reduce
-  reduce<<<blocknums, 1024>>>(tempLens, n);
-
-  //copy to uint64_t before deletion.
-  uint64_t max;
-  cudaMemcpy(&max, tempLens, sizeof(uint64_t), cudaMemcpyDeviceToHost);
-
-  cudaFree(tempLens);
-
-  return max;
-
-}
 
 //build grandparents - needs to happen as independent kernel call
 uint64_t * build_grandparents(uint64_t nnz, uint64_t * parents){
@@ -784,22 +564,7 @@ uint64_t * build_grandparents(uint64_t nnz, uint64_t * parents){
 
 }
 
-__global__ void star_gp_compare(uint64_t nnz, uint64_t*parents, uint64_t* grandparents, bool* stars){
 
-  int tid = threadIdx.x +  blockIdx.x * blockDim.x;
-
-  if (tid >= nnz) return;
-
-  uint64_t gp = grandparents[tid];
-  uint64_t parent = parents[tid];
-
-  if (gp != parent){
-    stars[tid] = false;
-    stars[gp] = false;
-  }
-
-
-}
 
 __global__ void parent_star_gp_compare(uint64_t nnz, uint64_t*parents, uint64_t* grandparents, bool* stars){
 
@@ -830,27 +595,7 @@ __global__ void star_parent(uint64_t nnz, uint64_t*parents, bool* stars){
 
 }
 
-//update stars based on AS starcheck
-void star_check(uint64_t nnz, uint64_t * parents, bool *stars){
 
-  uint64_t blocknums = (nnz -1)/1024 + 1;
-
-  //first, build grandparents and reset star
-  reset_star<<<blocknums, 1024>>>(nnz, stars);
-  uint64_t * grandparents = build_grandparents(nnz, parents);
-
-  //next step
-  //if gp[v] != p[v]
-  //star[v] and star[gp[v]] = false;
-  star_gp_compare<<<blocknums, 1024>>>(nnz, parents, grandparents, stars);
-
-  //inherit parent's condition
-  cudaFree(grandparents);
-  star_parent<<<blocknums, 1024>>>(nnz, parents, stars);
-
-
-
-}
 
 //update stars based on AS starcheck
 //simpler version
@@ -871,111 +616,6 @@ void parent_star_check(uint64_t nnz, uint64_t * parents, bool *stars){
   cudaFree(grandparents);
 
 
-
-}
-
-__global__ void count_contigs(uint64_t nnz, uint64_t * parents){
-
-  uint64_t tid = threadIdx.x +  blockIdx.x * blockDim.x;
-
-  if (tid >= nnz) return;
-
-  if (tid != 2832) return;
-
-  //iterate through parents
-  uint64_t count = 0;
-
-  for (int i = 0;i <nnz; i++){
-    if (parents[i] == tid) count++;
-  }
-
-  if (count != 0){
-    printf("Component %llu: %lli\n", tid, count);
-  }
-
-}
-
-
-
-uint64_t * old_cc(uint64_t nnz, uint64_t* Arows, uint64_t* Acols, char* Avals){
-
-
-  uint64_t blocknums = (nnz -1)/1024 + 1;
-
-  uint64_t * parents;
-
-  cudaMalloc((void **)&parents,nnz*sizeof(uint64_t));
-
-  uint64_t * old_parents;
-
-  cudaMalloc((void **)&old_parents,nnz*sizeof(uint64_t));
-
-  init_parent<<<blocknums, 1024>>>(nnz, parents);
-
-  //copy over to check
-  uint_copy_kernel<<<blocknums, 1024>>>(old_parents, parents, nnz);
-
-  //init stars
-  bool * stars;
-
-  cudaMalloc((void ** )&stars, nnz*sizeof(bool));
-
-  reset_star<<<blocknums, 1024>>>(nnz, stars);
-
-  uint64_t count;
-
-  uint64_t * grandparents;
-
-  uint64_t iters = 0;
-
-  //start with conditional hook
-  //this encodes the connections between zz
-
-  do  {
-
-    printf("Before\n");
-    printCudaVec(nnz, parents);
-    printf("old\n");
-    printCudaVec(nnz, old_parents);
-
-    //main code
-    naive_cond_hook<<<blocknums, 1024>>>(nnz, Arows, Acols, Avals, parents, stars);
-
-
-    star_check(nnz, parents, stars);
-
-    naive_uncond_hook<<<blocknums, 1024>>>(nnz, Arows, Acols, Avals, parents, stars);
-
-    grandparents = build_grandparents(nnz, parents);
-
-    shortcutting<<<blocknums, 1024>>>(nnz,parents,grandparents, stars);
-
-    printf("after\n");
-    printCudaVec(nnz, parents);
-    printf("old\n");
-    printCudaVec(nnz, old_parents);
-
-    reduce_parents<<<blocknums, 1024>>>(parents, old_parents, nnz);
-
-    //copy to uint64_t before deletion.
-    cudaMemcpy(&count, old_parents, sizeof(uint64_t), cudaMemcpyDeviceToHost);
-
-    //and reset parents
-    uint_copy_kernel<<<blocknums, 1024>>>(old_parents, parents, nnz);
-    cudaFree(grandparents);
-
-    //printf("Counts\n");
-    //count_contigs<<<blocknums, 1024>>>(nnz, parents);
-    printf("Done with iteration %llu: %llu \n", iters, count);
-    iters++;
-
-  } while (count != 0);
-
-  printf("Converged\n");
-
-  //parents are converged
-  cudaFree(old_parents);
-  return parents;
 
 }
 
@@ -1049,9 +689,22 @@ void cc(uint64_t nnz, uint64_t num_vert, uint64_t* Arows, uint64_t* Acols, char*
   //this encodes the connections between vertices
   naive_uncond_hook<<<blocknums, 1024>>>(nnz, Arows, Acols, Avals, parents, stars);
 
+  //print statements - use with device syncronize
+  cudaDeviceSynchronize();
+  // for (int i =0; i < outputRows.size(); i++){
+  //   printrowkern(outputRows.at(i), contigs, contig_lens);
+  // }
 
   //after unconditional hook, we need to add back in the starts so that the final items aren't one kmer short
   update_leads<<<blocknums, 1024>>>(nnz, contigs, contig_lens, maxOut, kmerVals, kmerLens, kmerParents);
+
+
+  cudaDeviceSynchronize();
+  // for (int i =0; i < outputRows.size(); i++){
+  //   printrowkern(outputRows.at(i), contigs, contig_lens);
+  // }
+
+
 
   //printf("Before\n");
   //printCudaVec(num_vert, parents);
@@ -1120,20 +773,25 @@ void cc(uint64_t nnz, uint64_t num_vert, uint64_t* Arows, uint64_t* Acols, char*
 
 
   //when done, print outrows
-  for (int i =0; i < outputRows.size(); i++){
-    printrowkern(outputRows.at(i), contigs, contig_lens);
-  }
+  // for (int i =0; i < outputRows.size(); i++){
+  //   printrowkern(outputRows.at(i), contigs, contig_lens);
+  // }
 
   //time to write to output
   std::ofstream fout;
-  fout.open("output.dat");
+  fout.open("output.txt");
 
   for (int i = 0; i < outputRows.size(); i++){
 
     uint64_t row = outputRows.at(i);
-    cout << "len: " << contig_lens[row] << endl;
+    cout << "len: " << contig_lens[row];
+
+    if (contig_lens[row] >= MAX_VEC){
+      cout << " TOO LARGE";
+    }
+    cout <<  endl;
     for (uint64_t j = 0; j < contig_lens[row]; j++){
-      fout << contigs[i*MAX_VEC+j];
+      fout << contigs[row*MAX_VEC+j];
     }
     fout << endl;
 
