@@ -159,7 +159,7 @@ __global__ void naive_cond_hook(uint64_t nnz, uint64_t * Arows, uint64_t * Acols
 
 }
 
-__global__ void parent_cond_hook(uint64_t nnz, uint64_t * parent, uint64_t* gparent, bool * star, char* contigs, uint64_t * contig_lens, char* contigs_holder, uint64_t * contig_lens_holder){
+__global__ void parent_cond_hook(uint64_t nnz, uint64_t * parent, uint64_t * parent_holder, uint64_t * gparent, bool * star, char* contigs, uint64_t * contig_lens, char* contigs_holder, uint64_t * contig_lens_holder){
 
   uint64_t tid = threadIdx.x +  blockIdx.x*blockDim.x;
 
@@ -198,11 +198,15 @@ __global__ void parent_cond_hook(uint64_t nnz, uint64_t * parent, uint64_t* gpar
     contig_lens_holder[tid] = my_contig_len+my_parent_len;
 
     //and absorb
-    parent[tid] = gparent_u;
+    parent_holder[tid] = gparent_u;
 
 
 
   } else {
+
+
+    //TODO: Move this section to the star check
+    //atm we are repeating work
 
     uint64_t my_contig_len = contig_lens[tid];
     char * my_contig = contigs + MAX_VEC*tid;
@@ -214,6 +218,8 @@ __global__ void parent_cond_hook(uint64_t nnz, uint64_t * parent, uint64_t* gpar
     }
 
     contig_lens_holder[tid] = my_contig_len;
+
+    parent_holder[tid] =  parent_u;
 
   }
   // if (parent[tid] =  parent[parent[tid]]){
@@ -647,11 +653,11 @@ void cc(uint64_t nnz, uint64_t num_vert, uint64_t* Arows, uint64_t* Acols, char*
 
 
   //init both
-  printf("If failure, Below this.\n");
+  //printf("If failure, Below this.\n");
   init_contig_lens<<<block_vert, 1024>>>(num_vert, contig_lens);
   assert_contig_lens<<<block_vert, 1024>>>(num_vert, contig_lens);
   cudaDeviceSynchronize();
-  printf("Things worked out\n");
+  //printf("Things worked out\n");
   init_contigs<<<blocknums, 1024>>>(nnz,num_vert, Arows, Acols, Avals, contigs, contig_lens);
 
 
@@ -660,14 +666,14 @@ void cc(uint64_t nnz, uint64_t num_vert, uint64_t* Arows, uint64_t* Acols, char*
 
   cudaMalloc((void **)&parents,num_vert*sizeof(uint64_t));
 
-  uint64_t * old_parents;
+  uint64_t * parents_holder;
 
-  cudaMalloc((void **)&old_parents,num_vert*sizeof(uint64_t));
+  cudaMalloc((void **)&parents_holder,num_vert*sizeof(uint64_t));
 
   init_parent<<<block_vert, 1024>>>(num_vert, parents);
 
   //copy over to check
-  uint_copy_kernel<<<block_vert, 1024>>>(old_parents, parents, num_vert);
+  uint_copy_kernel<<<block_vert, 1024>>>(parents_holder, parents, num_vert);
 
   //init stars
   bool * stars;
@@ -722,7 +728,7 @@ void cc(uint64_t nnz, uint64_t num_vert, uint64_t* Arows, uint64_t* Acols, char*
 
     //main code
     grandparents = build_grandparents(num_vert, parents);
-    parent_cond_hook<<<block_vert, 1024>>>(num_vert, parents, grandparents, stars, contigs, contig_lens, contigs_holder, contig_lens_holder);
+    parent_cond_hook<<<block_vert, 1024>>>(num_vert, parents, parents_holder, grandparents, stars, contigs, contig_lens, contigs_holder, contig_lens_holder);
     //naive_uncond_hook<<<blocknums, 1024>>>(nnz, Arows, Acols, Avals, parents, stars);
 
     //update contigs
@@ -734,12 +740,19 @@ void cc(uint64_t nnz, uint64_t num_vert, uint64_t* Arows, uint64_t* Acols, char*
     contigs_holder = temp;
     contig_lens_holder = temp_lens;
 
+
+    //trade parents
+    //doing it this way lets us reuse the memory efficiently
+    uint64_t * temp_parents = parents;
+    parents =  parents_holder;
+    parents_holder  = temp_parents;
+
     parent_star_check(num_vert, parents, stars);
 
     //naive_uncond_hook<<<blocknums, 1024>>>(nnz, Arows, Acols, Avals, parents, stars);
 
 
-    printLenskern(outputRows, contig_lens);
+    //printLenskern(outputRows, contig_lens);
     //shortcutting<<<blocknums, 1024>>>(nnz,parents,grandparents, stars);
 
     //printf("after\n");
@@ -749,14 +762,14 @@ void cc(uint64_t nnz, uint64_t num_vert, uint64_t* Arows, uint64_t* Acols, char*
 
     //this is buggy
     //appears to not be consistent
-    //reduce_parents<<<block_vert, 1024>>>(parents, old_parents, num_vert);
+    //reduce_parents<<<block_vert, 1024>>>(parents, parents_holder, num_vert);
 
     //copy to uint64_t before deletion.
-    //cudaMemcpy(&count, old_parents, sizeof(uint64_t), cudaMemcpyDeviceToHost);
+    //cudaMemcpy(&count, parents_holder, sizeof(uint64_t), cudaMemcpyDeviceToHost);
     converged = starConverged(num_vert, stars);
 
     //and reset parents
-    uint_copy_kernel<<<block_vert, 1024>>>(old_parents, parents, num_vert);
+    uint_copy_kernel<<<block_vert, 1024>>>(parents_holder, parents, num_vert);
     cudaFree(grandparents);
 
     //printf("Counts\n");
@@ -798,8 +811,18 @@ void cc(uint64_t nnz, uint64_t num_vert, uint64_t* Arows, uint64_t* Acols, char*
   }
   fout.close();
 
+  //last call to assert correctness
+  cudaDeviceSynchronize();
+
   //parents are converged
-  cudaFree(old_parents);
+  //free up memory
+  cudaFree(parents);
+  cudaFree(parents_holder);
+  cudaFree(contigs);
+  cudaFree(contig_lens);
+  cudaFree(stars);
+  cudaFree(contigs_holder);
+  cudaFree(contig_lens_holder);
 
 
 }

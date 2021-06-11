@@ -154,6 +154,12 @@ int main(int argc, char** argv) {
     for (size_t i = 0; i < kmers.size(); i++){
       pkmer_t kmer = kmers.at(i).kmer;
 
+
+      //IDEA: Could these be counted more than once???
+
+      //hash of a hash is funky?
+
+      
       if (map.count(kmer.hash()) != 0){
         cout << "Repeat hit, these should be cleaned" << endl;
         continue;
@@ -182,6 +188,7 @@ int main(int argc, char** argv) {
     uint64_t nnz = 0;
     for (int i = 0; i < kmers.size(); i++){
 
+      //idea
       if (kmers.at(i).forwardExt() != 'F'){
         nnz+=1;
       }
