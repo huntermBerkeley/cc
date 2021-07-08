@@ -13,6 +13,7 @@
 //Init cuda here
 
 
+
 // __device__ void VecTest(float * A, float* B, size_t n){
 //
 //   size_t tid = threadIdx.x;
@@ -27,7 +28,7 @@
 typedef unsigned long long int uint64_cu;
 
 #ifndef MAX_VEC
-#define MAX_VEC 5000
+#define MAX_VEC 8000
 #endif
 
 //credit to stackoverflow
@@ -55,6 +56,7 @@ using namespace std;
 //
 //     return old;
 // }
+
 
 void printrowkern(uint64_t row, char * vec, uint64_t*lengths){
 
@@ -229,7 +231,27 @@ __global__ void parent_cond_hook(uint64_t nnz, uint64_t * parent, uint64_t * par
 
 }
 
+//perform initial setup
+//given an adj matrix,
+__global__ void simple_adj_hook(uint64_t nnz, uint64_t * Arows, uint64_t * Acols, char* Avals, uint64_t * parent, bool * stars, char* contigs, uint64_t * contig_lens){
 
+  uint64_t tid = threadIdx.x +  blockIdx.x*blockDim.x;
+
+  if (tid >= nnz) return;
+
+  uint64_t my_index = Arows[tid];
+
+  parent[my_index] = Acols[tid];
+
+  //and init contigs
+  char my_val = Avals[tid];
+  contigs[my_index*MAX_VEC] = my_val;
+  contig_lens[my_index] = 1;
+
+}
+
+//unconditional hook - this is frankly bizarre
+//and im not sure how it's 'worked' so far
 __global__ void naive_uncond_hook(uint64_t nnz, uint64_t * Arows, uint64_t * Acols, char * Avals, uint64_t * parent, bool * star){
 
   uint64_t tid = threadIdx.x +  blockIdx.x*blockDim.x;
@@ -535,7 +557,7 @@ bool starConverged(uint64_t nnz, bool*stars){
 
   result = (converged[0] == 1);
 
-  std::cout << "Result: " << result << "." << std::endl;
+  std::cout << "converged: " << result << "." << std::endl;
   cudaFree(converged);
 
   return result;
@@ -640,7 +662,9 @@ void cc(uint64_t nnz, uint64_t num_vert, uint64_t* Arows, uint64_t* Acols, char*
 
   cudaMallocManaged((void **)&contigs,num_vert*MAX_VEC*sizeof(char));
 
+
   cudaMallocManaged((void **)&contig_lens,num_vert*sizeof(uint64_t));
+
 
   //expose some extra memory so we don't get weird overwrite bugs
   char * contigs_holder;
@@ -656,6 +680,9 @@ void cc(uint64_t nnz, uint64_t num_vert, uint64_t* Arows, uint64_t* Acols, char*
   //printf("If failure, Below this.\n");
   init_contig_lens<<<block_vert, 1024>>>(num_vert, contig_lens);
   assert_contig_lens<<<block_vert, 1024>>>(num_vert, contig_lens);
+
+  init_contig_lens<<<block_vert, 1024>>>(num_vert, contig_lens_holder);
+  assert_contig_lens<<<block_vert, 1024>>>(num_vert, contig_lens_holder);
   cudaDeviceSynchronize();
   //printf("Things worked out\n");
   init_contigs<<<blocknums, 1024>>>(nnz,num_vert, Arows, Acols, Avals, contigs, contig_lens);
@@ -671,6 +698,7 @@ void cc(uint64_t nnz, uint64_t num_vert, uint64_t* Arows, uint64_t* Acols, char*
   cudaMalloc((void **)&parents_holder,num_vert*sizeof(uint64_t));
 
   init_parent<<<block_vert, 1024>>>(num_vert, parents);
+  //init_parent<<<block_vert, 1024>>>(num_vert, parents_holder);
 
   //copy over to check
   uint_copy_kernel<<<block_vert, 1024>>>(parents_holder, parents, num_vert);
@@ -693,6 +721,7 @@ void cc(uint64_t nnz, uint64_t num_vert, uint64_t* Arows, uint64_t* Acols, char*
 
   //start with conditional hook
   //this encodes the connections between vertices
+  //this isn't right :ADF:ASD
   naive_uncond_hook<<<blocknums, 1024>>>(nnz, Arows, Acols, Avals, parents, stars);
 
   //print statements - use with device syncronize
@@ -792,7 +821,7 @@ void cc(uint64_t nnz, uint64_t num_vert, uint64_t* Arows, uint64_t* Acols, char*
 
   //time to write to output
   std::ofstream fout;
-  fout.open("output.txt");
+  fout.open("cc_output.dat");
 
   for (int i = 0; i < outputRows.size(); i++){
 
@@ -823,6 +852,130 @@ void cc(uint64_t nnz, uint64_t num_vert, uint64_t* Arows, uint64_t* Acols, char*
   cudaFree(stars);
   cudaFree(contigs_holder);
   cudaFree(contig_lens_holder);
+
+
+}
+
+//iteratively solve the cc problem by jumping through the parents array
+__global__ void cuda_solver_kernel(uint64_t nnz, uint64_t num_vert, char* contigs, uint64_t* contig_lens, uint64_t * parents, uint64_t startNnz, char * startVals, uint64_t * startLens, uint64_t * startRows){
+
+  uint64_t tid = threadIdx.x +  blockIdx.x * blockDim.x;
+
+  if (tid >= startNnz) return;
+
+  uint64_t row = startRows[tid];
+
+  //else
+  printf("Tid %llu working on kmer that starts at %llu\n", tid, row);
+
+  //first step, copy over my parent - if we have a typo it may show up here
+  assert(contig_lens[startRows[tid]] == 1);
+
+  //now steal character
+  char my_first_extension = contigs[row*MAX_VEC];
+
+  //and fill in
+  for (uint64_t i = 0; i < startLens[tid]; i++){
+
+    contigs[row*MAX_VEC +i] = startVals[tid*MAX_VEC +i];
+  }
+  contigs[row*MAX_VEC + startLens[tid]] = my_first_extension;
+  contig_lens[row] += startLens[tid];
+
+  //start looks good, lets test the rest!
+  uint64_t my_parent = parents[row];
+  while (my_parent != parents[my_parent]){
+
+    //with 0 mutations, everyone ahead of me should have exactly 1 base
+    assert(contig_lens[my_parent] == 1);
+    //copy over data
+    for (uint64_t i = 0; i < contig_lens[my_parent]; i++){
+
+      contigs[row*MAX_VEC+contig_lens[row]+i] = contigs[my_parent*MAX_VEC + i];
+
+    }
+    //update length
+    contig_lens[row] += contig_lens[my_parent];
+
+    //and update parent
+    parents[row] = parents[parents[row]];
+    my_parent = parents[row];
+
+  }
+
+}
+
+
+//separate the approach a little from cc
+//simplest version does a one off trace - builds all contigs in parallel locally
+//this now works!
+void iterative_cuda_solver(uint64_t nnz, uint64_t num_vert, uint64_t* Arows, uint64_t* Acols, char* Avals, std::vector<uint64_t> outputRows, uint64_t outNnz, char*kmerVals, uint64_t*kmerLens, uint64_t * kmerParents){
+
+  //block sizes for mat and vert based ops
+  uint64_t blocknums = (nnz -1)/1024 + 1;
+  uint64_t block_vert = (num_vert -1)/1024 + 1;
+
+  //define some memory to work with
+  char * contigs;
+  uint64_t * contig_lens;
+
+
+  cudaMallocManaged((void **)&contigs,num_vert*MAX_VEC*sizeof(char));
+
+  cudaMallocManaged((void **)&contig_lens,num_vert*sizeof(uint64_t));
+
+
+
+
+  //setup! want to do parent_cond hook, and then complete iteratively
+  init_contig_lens<<<block_vert, 1024>>>(num_vert, contig_lens);
+  assert_contig_lens<<<block_vert, 1024>>>(num_vert, contig_lens);
+
+  cudaDeviceSynchronize();
+  //init_contigs<<<blocknums, 1024>>>(nnz,num_vert, Arows, Acols, Avals, contigs, contig_lens);
+
+  uint64_t * parents;
+
+  cudaMalloc((void **)&parents,num_vert*sizeof(uint64_t));
+
+  init_parent<<<block_vert, 1024>>>(num_vert, parents);
+
+  bool * stars;
+
+  cudaMalloc((void ** )&stars, num_vert*sizeof(bool));
+
+  reset_star<<<block_vert, 1024>>>(num_vert, stars);
+
+
+  simple_adj_hook<<<blocknums, 1024>>>(nnz, Arows, Acols, Avals, parents, stars, contigs, contig_lens);
+
+  cudaDeviceSynchronize();
+
+  //now that the device is ready, launch iterative solver
+  cuda_solver_kernel<<<block_vert, 1024>>>(nnz, num_vert, contigs, contig_lens, parents, outNnz, kmerVals, kmerLens, kmerParents);
+
+  cudaDeviceSynchronize();
+  fflush(stdout);
+
+  std::ofstream fout;
+  fout.open("iterative_output.dat");
+
+  for (int i = 0; i < outputRows.size(); i++){
+
+    uint64_t row = outputRows.at(i);
+    cout << "len: " << contig_lens[row];
+
+    if (contig_lens[row] >= MAX_VEC){
+      cout << " TOO LARGE";
+    }
+    cout <<  endl;
+    for (uint64_t j = 0; j < contig_lens[row]; j++){
+      fout << contigs[row*MAX_VEC+j];
+    }
+    fout << endl;
+
+  }
+  fout.close();
 
 
 }
