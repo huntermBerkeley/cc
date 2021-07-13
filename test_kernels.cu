@@ -10,6 +10,7 @@
 #include <vector>
 #include <assert.h>
 #include <fstream>
+#include <chrono>
 //Init cuda here
 
 
@@ -161,6 +162,225 @@ __global__ void naive_cond_hook(uint64_t nnz, uint64_t * Arows, uint64_t * Acols
 
 }
 
+__global__ void parent_cond_hook_no_branch(uint64_t nnz, uint64_t * parent, uint64_t * parent_holder, uint64_t * gparent, bool * star, char* contigs, uint64_t * contig_lens, char* contigs_holder, uint64_t * contig_lens_holder){
+
+  uint64_t tid = threadIdx.x +  blockIdx.x*blockDim.x;
+
+  if (tid >= nnz) return;
+
+  //for parent cond hook, if I am not a star, set my parent to my grandparent
+
+  //if star[u]
+  // parent[u] = parent[parent[u]]
+  uint64_t gparent_u = gparent[tid];
+  uint64_t parent_u = parent[tid];
+
+  if (star[tid]){
+
+    //absorb from your parent
+    //first copy over your material
+
+    //compress parents
+    uint64_t my_contig_len = contig_lens[tid];
+    uint64_t my_parent_len = contig_lens[parent_u];
+    char * my_contig = contigs + MAX_VEC*tid;
+    char * my_parent = contigs+MAX_VEC*parent_u;
+    char * my_output = contigs_holder + MAX_VEC*tid;
+
+    //copy from me
+    for (int i = 0; i < my_contig_len; i++){
+      my_output[i] = my_contig[i];
+    }
+
+    //copy from my parent
+    for (int i =0; i < my_parent_len; i++){
+      my_output[i+my_contig_len] = my_parent[i];
+    }
+
+    //copy to new len
+    contig_lens_holder[tid] = my_contig_len+my_parent_len;
+
+    //and absorb
+    parent_holder[tid] = gparent_u;
+
+
+    //having a branch here is really bad and should  not happen
+  }
+
+
+}
+
+//following
+__global__ void map_contigs(uint64_t maxOut, char * startVals, uint64_t * startLens, uint64_t * startParents, uint64_t * contig_index, uint64_t * parents, uint64_t * contig_map, uint64_t * contig_map_lens){
+
+  uint64_t tid = threadIdx.x +  blockIdx.x*blockDim.x;
+
+  if (tid >= maxOut) return;
+
+  //now find correct length and copy over into buffer
+  uint64_t my_parent = startParents[tid];
+  uint64_t my_contig = parents[my_parent];
+
+  contig_map[tid] = my_contig;
+  contig_map_lens[tid] = contig_index[my_parent] + startLens[tid];
+
+
+}
+
+
+//output the mappings
+__global__ void print_mappings(uint64_t maxOut, uint64_t * contig_map, uint64_t * contig_map_lens){
+
+  uint64_t tid = threadIdx.x +  blockIdx.x*blockDim.x;
+
+  if (tid != 0) return;
+
+  for (uint64_t i =0; i < maxOut; i++){
+
+    printf("Contig %llu -> %llu, len %llu\n", i, contig_map[i], contig_map_lens[i]);
+  }
+
+}
+
+
+__global__ void mallocContigs(uint64_t maxOut, char ** final_contigs, uint64_t * contig_map_lens){
+
+  uint64_t tid = threadIdx.x +  blockIdx.x*blockDim.x;
+
+  if (tid >= maxOut) return;
+
+  char * temp_contig;
+
+  cudaMalloc((void **)&temp_contig,contig_map_lens[tid]*sizeof(char));
+  //allocate device_side memory
+
+
+  final_contigs[tid] = temp_contig;
+
+
+}
+
+__global__ void freeContigs(uint64_t maxOut, char ** final_contigs){
+
+  uint64_t tid = threadIdx.x +  blockIdx.x*blockDim.x;
+
+  if (tid >= maxOut) return;
+
+  cudaFree(final_contigs[tid]);
+
+
+}
+
+__global__ void fill_contigs_starts(uint64_t maxOut, char ** final_contigs, char * startVals, uint64_t* startLens){
+
+  uint64_t tid = threadIdx.x +  blockIdx.x*blockDim.x;
+
+  if (tid >= maxOut) return;
+
+  for (uint64_t i=0; i < startLens[tid]; i++){
+
+    final_contigs[tid][i] = startVals[tid*MAX_VEC+i];
+
+  }
+
+}
+
+
+//fill all contigs
+//each vertex finds its contig
+// then its insert position into that contig
+// and then writes in parallel
+//idea! use 2d blocking
+//x is vertex num -- if this is not fast enough do vertex tidy = block.x to have all threads access same value
+//y is maxOut num - try all array indices in parallel, kill all threads that don't continue
+__global__ void fill_contigs(uint64_t num_verts, char ** final_contigs, uint64_t maxOut, uint64_t * contig_map, uint64_t * contig_map_lens, char * contigs, uint64_t * contig_index, uint64_t * contig_lens, uint64_t * parents){
+
+  uint64_t tid = threadIdx.x +  blockIdx.x*blockDim.x;
+
+  uint64_t tidy = threadIdx.y + blockIdx.y*blockDim.y;
+
+  //threads are launching, just not inputting correctly
+
+
+  if (tid >= num_verts) return;
+  if (tidy >= maxOut) return;
+
+
+  uint64_t my_contig = parents[tid];
+
+  uint64_t my_index_contig = contig_map[tidy];
+
+  printf("Thread %llu, %llu launching, comp %llu, %llu with len %llu\n", tid, tidy, my_contig, my_index_contig, contig_lens[tid]);
+
+  if (my_contig != my_index_contig) return;
+
+  if (contig_lens[tid] == 0) return;
+
+  printf("Vertex %llu lines up with contig %llu\n", tid, tidy);
+
+  //tidy is now the contig to access
+  uint64_t my_start = contig_map_lens[tidy] - contig_index[tid];
+
+
+
+  final_contigs[tidy][my_start] = contigs[tid];
+
+}
+
+//copy over contigs to host, then save to a file
+__host__ void save_contigs(std::string filename, uint64_t maxOut, char ** final_contigs, uint64_t * final_lens){
+
+  //the first step is to copy over the lengths, so we know how large of a buffer to allocate
+
+  uint64_t * _lens = (uint64_t *) malloc(maxOut*sizeof(uint64_t));
+
+  char ** host_final_contigs = (char **) malloc(maxOut*sizeof(char *));
+
+  cudaMemcpy(_lens, final_lens, maxOut*sizeof(uint64_t), cudaMemcpyDeviceToHost);
+
+  cudaMemcpy(host_final_contigs, final_contigs, maxOut*sizeof(char * ), cudaMemcpyDeviceToHost);
+
+  std::ofstream fout;
+  fout.open(filename);
+
+  for (uint64_t i =0 ; i < maxOut; i++){
+
+    char * buffer = (char * ) malloc(_lens[i]*sizeof(char));
+
+    cudaMemcpy(buffer, host_final_contigs[i], _lens[i]*sizeof(char), cudaMemcpyDeviceToHost);
+
+    cudaDeviceSynchronize();
+    //file write
+    cout << "Contig:" << endl;
+    cout.write(buffer, _lens[i]);
+    cout << endl;
+    fout.write(buffer, _lens[i]);
+    fout << endl;
+
+    //done with save
+    free(buffer);
+  }
+
+  free(_lens);
+  free(host_final_contigs);
+
+}
+
+__global__ void check_contig(uint64_t contig_id, char ** final_contigs, uint64_t * lens){
+
+  uint64_t tid = threadIdx.x +  blockIdx.x*blockDim.x;
+
+  if (tid != 0) return;
+
+  printf("Looking at contig %llu with len %llu\n", contig_id, lens[contig_id]);
+
+  for (uint64_t i=0; i <lens[contig_id]; i++){
+    printf("%c", final_contigs[contig_id][i]);
+  }
+  printf("\n");
+}
+
+//fill the start of every contig based input starts
 __global__ void parent_cond_hook(uint64_t nnz, uint64_t * parent, uint64_t * parent_holder, uint64_t * gparent, bool * star, char* contigs, uint64_t * contig_lens, char* contigs_holder, uint64_t * contig_lens_holder){
 
   uint64_t tid = threadIdx.x +  blockIdx.x*blockDim.x;
@@ -203,7 +423,7 @@ __global__ void parent_cond_hook(uint64_t nnz, uint64_t * parent, uint64_t * par
     parent_holder[tid] = gparent_u;
 
 
-
+    //having a branch here is really bad and should  not happen
   } else {
 
 
@@ -231,6 +451,42 @@ __global__ void parent_cond_hook(uint64_t nnz, uint64_t * parent, uint64_t * par
 
 }
 
+__global__ void len_cond_hook(uint64_t nnz, uint64_t * parent, uint64_t * parent_holder, bool * star, uint64_t * contig_index, uint64_t * contig_index_holder){
+
+  uint64_t tid = threadIdx.x +  blockIdx.x*blockDim.x;
+
+  if (tid >= nnz) return;
+
+  //for parent cond hook, if I am not a star, set my parent to my grandparent
+
+  //if star[u]
+  // parent[u] = parent[parent[u]]
+
+  uint64_t parent_u = parent[tid];
+  uint64_t gparent_u = parent[parent_u];
+  uint64_t parent_len = 0;
+  uint64_t my_contig_index = contig_index[tid];
+
+  if (star[tid]){
+
+    //absorb from your parent
+    //first copy over your material
+
+    //compress parents
+
+    parent_len = contig_index[parent_u];
+
+  }
+
+
+    //copy to new len
+    contig_index_holder[tid] = my_contig_index+parent_len;
+
+    //and absorb
+    parent_holder[tid] = gparent_u;
+
+}
+
 //perform initial setup
 //given an adj matrix,
 __global__ void simple_adj_hook(uint64_t nnz, uint64_t * Arows, uint64_t * Acols, char* Avals, uint64_t * parent, bool * stars, char* contigs, uint64_t * contig_lens){
@@ -246,6 +502,23 @@ __global__ void simple_adj_hook(uint64_t nnz, uint64_t * Arows, uint64_t * Acols
   //and init contigs
   char my_val = Avals[tid];
   contigs[my_index*MAX_VEC] = my_val;
+  contig_lens[my_index] = 1;
+
+}
+
+__global__ void len_adj_hook(uint64_t nnz, uint64_t * Arows, uint64_t * Acols, char* Avals, uint64_t * parent, bool * stars, char* contigs, uint64_t * contig_lens){
+
+  uint64_t tid = threadIdx.x +  blockIdx.x*blockDim.x;
+
+  if (tid >= nnz) return;
+
+  uint64_t my_index = Arows[tid];
+
+  parent[my_index] = Acols[tid];
+
+  //and init contigs
+  char my_val = Avals[tid];
+  contigs[my_index] = my_val;
   contig_lens[my_index] = 1;
 
 }
@@ -594,14 +867,14 @@ uint64_t * build_grandparents(uint64_t nnz, uint64_t * parents){
 
 
 
-__global__ void parent_star_gp_compare(uint64_t nnz, uint64_t*parents, uint64_t* grandparents, bool* stars){
+__global__ void parent_star_gp_compare(uint64_t nnz, uint64_t*parents, bool* stars){
 
   int tid = threadIdx.x +  blockIdx.x * blockDim.x;
 
   if (tid >= nnz) return;
 
-  uint64_t gp = grandparents[tid];
   uint64_t parent = parents[tid];
+  uint64_t gp = parents[parent];
 
   if (gp == parent){
     stars[tid] = false;
@@ -609,6 +882,46 @@ __global__ void parent_star_gp_compare(uint64_t nnz, uint64_t*parents, uint64_t*
 
 
 }
+
+__global__ void parent_star_gp_compare_one_update(uint64_t nnz, uint64_t*parents, bool* stars, char*contigs, uint64_t* contig_lens, char* contigs_holder, uint64_t * contig_lens_holder){
+
+  int tid = threadIdx.x +  blockIdx.x * blockDim.x;
+
+  if (tid >= nnz) return;
+  //only look at stars that have not reset
+  if (!stars[tid]) return;
+
+  uint64_t parent = parents[tid];
+  uint64_t gp = parents[parent];
+
+  if (gp == parent){
+    stars[tid] = false;
+
+    //and update
+    uint64_t my_contig_len = contig_lens[tid];
+    char * my_contig = contigs + MAX_VEC*tid;
+    char * my_output = contigs_holder + MAX_VEC*tid;
+
+    //copy from me
+    for (int i = 0; i < my_contig_len; i++){
+      my_output[i] = my_contig[i];
+    }
+
+    contig_lens_holder[tid] = my_contig_len;
+
+    //doesn't need to be set - gets propogated in a later copy
+    //parent_holder[tid] =  parent_u;
+
+  }
+
+
+}
+
+
+
+
+
+
 
 __global__ void star_parent(uint64_t nnz, uint64_t*parents, bool* stars){
 
@@ -627,21 +940,48 @@ __global__ void star_parent(uint64_t nnz, uint64_t*parents, bool* stars){
 
 //update stars based on AS starcheck
 //simpler version
+//this is soo slow
 void parent_star_check(uint64_t nnz, uint64_t * parents, bool *stars){
 
   uint64_t blocknums = (nnz -1)/1024 + 1;
 
   //first, build grandparents and reset star
   reset_star<<<blocknums, 1024>>>(nnz, stars);
-  uint64_t * grandparents = build_grandparents(nnz, parents);
+  //uint64_t * grandparents = build_grandparents(nnz, parents);
+  cudaDeviceSynchronize();
+  //printf("Reset Star\n");
+  //fflush(stdout);
 
   //next step
   //if gp[v] != p[v]
   //star[v] and star[gp[v]] = false;
-  parent_star_gp_compare<<<blocknums, 1024>>>(nnz, parents, grandparents, stars);
+  parent_star_gp_compare<<<blocknums, 1024>>>(nnz, parents, stars);
+
+  cudaDeviceSynchronize();
+  //printf("Set stars\n");
+  //fflush(stdout);
 
   //inherit parent's condition
-  cudaFree(grandparents);
+  //cudaFree(grandparents);
+
+
+
+}
+
+void parent_star_check_noreset(uint64_t nnz, uint64_t * parents, bool *stars, char*contig, uint64_t* contig_lens, char* contig_holder, uint64_t * contig_lens_holder){
+
+  uint64_t blocknums = (nnz -1)/1024 + 1;
+
+  //first, build grandparents and reset star
+
+
+  //next step
+  //if gp[v] != p[v]
+  //star[v] and star[gp[v]] = false;
+  parent_star_gp_compare_one_update<<<blocknums, 1024>>>(nnz, parents, stars, contig, contig_lens, contig_holder, contig_lens_holder);
+
+  //inherit parent's condition
+  //cudaFree(grandparents);
 
 
 
@@ -658,6 +998,8 @@ void cc(uint64_t nnz, uint64_t num_vert, uint64_t* Arows, uint64_t* Acols, char*
   //for each vertex init with parent
   char * contigs;
   uint64_t * contig_lens;
+
+  auto start = std::chrono::high_resolution_clock::now();
 
 
   cudaMallocManaged((void **)&contigs,num_vert*MAX_VEC*sizeof(char));
@@ -684,8 +1026,14 @@ void cc(uint64_t nnz, uint64_t num_vert, uint64_t* Arows, uint64_t* Acols, char*
   init_contig_lens<<<block_vert, 1024>>>(num_vert, contig_lens_holder);
   assert_contig_lens<<<block_vert, 1024>>>(num_vert, contig_lens_holder);
   cudaDeviceSynchronize();
+
+  auto contig_setup = std::chrono::high_resolution_clock::now();
+
+  std::chrono::duration<double> diff = contig_setup-start;
+
+  std::cout << "Time required for contig setup: " << diff.count() << " s\n";
   //printf("Things worked out\n");
-  init_contigs<<<blocknums, 1024>>>(nnz,num_vert, Arows, Acols, Avals, contigs, contig_lens);
+  //init_contigs<<<blocknums, 1024>>>(nnz,num_vert, Arows, Acols, Avals, contigs, contig_lens);
 
 
 
@@ -722,7 +1070,10 @@ void cc(uint64_t nnz, uint64_t num_vert, uint64_t* Arows, uint64_t* Acols, char*
   //start with conditional hook
   //this encodes the connections between vertices
   //this isn't right :ADF:ASD
-  naive_uncond_hook<<<blocknums, 1024>>>(nnz, Arows, Acols, Avals, parents, stars);
+  //naive_uncond_hook<<<blocknums, 1024>>>(nnz, Arows, Acols, Avals, parents, stars);
+  simple_adj_hook<<<blocknums, 1024>>>(nnz, Arows, Acols, Avals, parents, stars, contigs, contig_lens);
+
+
 
   //print statements - use with device syncronize
   cudaDeviceSynchronize();
@@ -739,6 +1090,11 @@ void cc(uint64_t nnz, uint64_t num_vert, uint64_t* Arows, uint64_t* Acols, char*
   //   printrowkern(outputRows.at(i), contigs, contig_lens);
   // }
 
+  auto full_setup = std::chrono::high_resolution_clock::now();
+
+  diff = full_setup-contig_setup;
+
+  std::cout << "Time required for final setup: " << diff.count() << " s\n";
 
 
   //printf("Before\n");
@@ -749,6 +1105,8 @@ void cc(uint64_t nnz, uint64_t num_vert, uint64_t* Arows, uint64_t* Acols, char*
 
 
   do  {
+
+    auto iter_start = std::chrono::high_resolution_clock::now();
 
     // printf("Before\n");
     // printCudaVec(num_vert, parents);
@@ -769,6 +1127,14 @@ void cc(uint64_t nnz, uint64_t num_vert, uint64_t* Arows, uint64_t* Acols, char*
     contigs_holder = temp;
     contig_lens_holder = temp_lens;
 
+    cudaDeviceSynchronize();
+
+    auto cond_hook = std::chrono::high_resolution_clock::now();
+
+    diff = cond_hook-iter_start;
+
+    std::cout << "Time required for cond hook: " << diff.count() << " s\n";
+
 
     //trade parents
     //doing it this way lets us reuse the memory efficiently
@@ -776,7 +1142,21 @@ void cc(uint64_t nnz, uint64_t num_vert, uint64_t* Arows, uint64_t* Acols, char*
     parents =  parents_holder;
     parents_holder  = temp_parents;
 
+    printf("Entering star check\n");
+    fflush(stdout);
+
+
     parent_star_check(num_vert, parents, stars);
+
+    //parent_star_check_noreset(num_vert, parents, stars, contigs, contig_lens, contigs_holder, contig_lens_holder);
+
+    cudaDeviceSynchronize();
+
+    auto star_hook = std::chrono::high_resolution_clock::now();
+
+    diff = star_hook - cond_hook;
+
+    std::cout << "Time required for star check: " << diff.count() << " s\n";
 
     //naive_uncond_hook<<<blocknums, 1024>>>(nnz, Arows, Acols, Avals, parents, stars);
 
@@ -801,10 +1181,19 @@ void cc(uint64_t nnz, uint64_t num_vert, uint64_t* Arows, uint64_t* Acols, char*
     uint_copy_kernel<<<block_vert, 1024>>>(parents_holder, parents, num_vert);
     cudaFree(grandparents);
 
+    cudaDeviceSynchronize();
+
     //printf("Counts\n");
     //count_contigs<<<blocknums, 1024>>>(nnz, parents);
     //printf("Done with iteration %llu: %llu %llu \n", iters, count, num_vert>>(iters-3));
     printf("Done with iter %llu\n", iters);
+
+    auto iter_end = std::chrono::high_resolution_clock::now();
+
+    diff = iter_end-iter_start;
+
+    std::cout << "Time required for whole iter: " << diff.count() << " s" << endl;
+
     iters++;
 
   } while (!converged);
@@ -919,6 +1308,7 @@ void iterative_cuda_solver(uint64_t nnz, uint64_t num_vert, uint64_t* Arows, uin
   char * contigs;
   uint64_t * contig_lens;
 
+  auto start = std::chrono::high_resolution_clock::now();
 
   cudaMallocManaged((void **)&contigs,num_vert*MAX_VEC*sizeof(char));
 
@@ -932,6 +1322,14 @@ void iterative_cuda_solver(uint64_t nnz, uint64_t num_vert, uint64_t* Arows, uin
   assert_contig_lens<<<block_vert, 1024>>>(num_vert, contig_lens);
 
   cudaDeviceSynchronize();
+
+
+  auto contig_setup = std::chrono::high_resolution_clock::now();
+
+  std::chrono::duration<double> diff = contig_setup-start;
+
+  std::cout << "Time required for contig setup: " << diff.count() << " s\n";
+
   //init_contigs<<<blocknums, 1024>>>(nnz,num_vert, Arows, Acols, Avals, contigs, contig_lens);
 
   uint64_t * parents;
@@ -978,4 +1376,187 @@ void iterative_cuda_solver(uint64_t nnz, uint64_t num_vert, uint64_t* Arows, uin
   fout.close();
 
 
+}
+
+
+
+void cc_len(uint64_t nnz, uint64_t num_vert, uint64_t* Arows, uint64_t* Acols, char* Avals, std::vector<uint64_t> outputRows, uint64_t maxOut, char*kmerVals, uint64_t*kmerLens, uint64_t * kmerParents){
+
+  uint64_t blocknums = (nnz -1)/1024 + 1;
+  uint64_t block_vert = (num_vert -1)/1024 + 1;
+
+
+  //move from adj matrix to forward extension per
+  char * contigs;
+  uint64_t * contig_index;
+
+  auto start = std::chrono::high_resolution_clock::now();
+
+  uint64_t * contig_index_holder;
+
+  uint64_t * contig_lens;
+
+  cudaMallocManaged((void **)&contig_index_holder,num_vert*sizeof(uint64_t));
+
+  cudaMallocManaged((void **)&contigs,num_vert*sizeof(char));
+  cudaMallocManaged((void **)&contig_index,num_vert*sizeof(uint64_t));
+
+  cudaMallocManaged((void **)&contig_lens,num_vert*sizeof(uint64_t));
+
+  uint64_t * parents;
+
+  cudaMalloc((void **)&parents,num_vert*sizeof(uint64_t));
+
+  uint64_t * parents_holder;
+
+  cudaMalloc((void **)&parents_holder,num_vert*sizeof(uint64_t));
+
+  init_parent<<<block_vert, 1024>>>(num_vert, parents);
+
+  uint_copy_kernel<<<block_vert, 1024>>>(parents_holder, parents, num_vert);
+
+  bool * stars;
+
+  cudaMalloc((void ** )&stars, num_vert*sizeof(bool));
+
+
+  reset_star<<<block_vert, 1024>>>(num_vert, stars);
+
+  init_contig_lens<<<block_vert, 1024>>>(num_vert, contig_index);
+  assert_contig_lens<<<block_vert, 1024>>>(num_vert, contig_index);
+
+  init_contig_lens<<<block_vert, 1024>>>(num_vert, contig_index_holder);
+  assert_contig_lens<<<block_vert, 1024>>>(num_vert, contig_index_holder);
+
+  // init_contig_lens<<<block_vert, 1024>>>(num_vert, contig_lens);
+  // assert_contig_lens<<<block_vert, 1024>>>(num_vert, contig_lens);
+
+  cudaDeviceSynchronize();
+
+  len_adj_hook<<<blocknums, 1024>>>(nnz, Arows, Acols, Avals, parents, stars, contigs, contig_index);
+
+  //copy over from index at step 1 - these are the correct output lens of the items
+  uint_copy_kernel<<<block_vert, 1024>>>(contig_lens, contig_index, num_vert);
+
+  cudaDeviceSynchronize();
+
+  auto full_setup = std::chrono::high_resolution_clock::now();
+
+  std::chrono::duration<double> diff = full_setup-start;
+
+  std::cout << "Time required for internal setup: " << diff.count() << " s" << endl;
+
+  fflush(stdout);
+
+  //no errors yet! time to start iterating
+  //there is no lead update this time :D
+
+  bool converged = false;
+  uint64_t iters = 0;
+
+  do {
+
+    auto iter_start = std::chrono::high_resolution_clock::now();
+
+
+    //first up is the cond hook
+    len_cond_hook<<<block_vert, 1024>>>(nnz, parents, parents_holder, stars, contig_index, contig_index_holder);
+
+    //then swap pointers
+
+    uint64_t * temp_indices = contig_index;
+    contig_index = contig_index_holder;
+    contig_index_holder = temp_indices;
+
+    uint64_t * temp_parents = parents;
+    parents =  parents_holder;
+    parents_holder  = temp_parents;
+
+    //and check stars
+    parent_star_check(num_vert, parents, stars);
+
+    converged = starConverged(num_vert, stars);
+
+    cudaDeviceSynchronize();
+
+    auto iter_end = std::chrono::high_resolution_clock::now();
+
+    diff = iter_end-iter_start;
+
+    std::cout << "Time required for  iter " << iters << ": " << diff.count() << " s" << endl;
+
+    iters++;
+
+  } while (!converged);
+
+  auto fill_start = std::chrono::high_resolution_clock::now();
+
+  //now that we've converged, we need to map from contig_id to actual values
+  uint64_t * contig_map;
+  uint64_t * contig_map_lens;
+
+  cudaMalloc((void **)&contig_map,maxOut*sizeof(uint64_t));
+  cudaMalloc((void **)&contig_map_lens,maxOut*sizeof(uint64_t));
+
+
+  uint64_t maxOutBlock = (maxOut -1)/1024 + 1;
+
+  map_contigs<<<maxOutBlock, 1024>>>(maxOut, kmerVals, kmerLens, kmerParents, contig_index, parents, contig_map, contig_map_lens);
+  //print_mappings<<<1,1>>>(maxOut, contig_map, contig_map_lens);
+
+  cudaDeviceSynchronize();
+  fflush(stdout);
+
+
+  //now that we have the mappings, allocate memory
+  char ** final_contigs;
+  cudaMalloc((void **)&final_contigs,maxOut*sizeof(char * ));
+
+  mallocContigs<<<maxOutBlock, 1024>>>(maxOut, final_contigs, contig_map_lens);
+
+  //now fill contigs
+  fill_contigs_starts<<<maxOutBlock, 1024>>>(maxOut, final_contigs, kmerVals, kmerLens);
+
+  //set up dim3
+
+  //x dim - num vert
+  uint64_t x_size = 24;
+  uint64_t y_size = 24;
+  uint64_t fill_x_block = (num_vert -1)/x_size + 1;
+  uint64_t fill_y_block = (maxOut - 1)/y_size + 1;
+
+  dim3 blockShape = dim3(x_size, y_size);
+  dim3 gridShape = dim3(fill_x_block, fill_y_block);
+
+  printf("Grid shape: (%llu, %llu)\n", gridShape.x, gridShape.y);
+  printf("block shape: (%llu, %llu)\n", blockShape.x, blockShape.y);
+  fflush(stdout);
+
+  fill_contigs<<<gridShape, blockShape>>>(num_vert, final_contigs, maxOut, contig_map, contig_map_lens, contigs, contig_index, contig_lens, parents);
+
+  cudaDeviceSynchronize();
+  fflush(stdout);
+
+  check_contig<<<1,1>>>(0, final_contigs, contig_map_lens);
+  cudaDeviceSynchronize();
+  fflush(stdout);
+
+  auto fill_end = std::chrono::high_resolution_clock::now();
+
+  diff = fill_end-fill_start;
+
+  std::cout << "Time required to fill contig buffers: " << diff.count() << " s" << endl;
+
+  save_contigs("cc_len.dat", maxOut, final_contigs, contig_map_lens);
+  cudaDeviceSynchronize();
+
+  auto write_end = std::chrono::high_resolution_clock::now();
+
+  diff = write_end - fill_end;
+
+  std::cout << "Wrote to file in : " << diff.count() << " s" << endl;
+
+
+  //and at the end free them
+  freeContigs<<<maxOutBlock, 1024>>>(maxOut, final_contigs);
 }

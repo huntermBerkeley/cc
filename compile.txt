@@ -1,0 +1,511 @@
+nvcc -c test_kernels.cu -O3 -o test_kernels.o
+nvcc laccuda.cpp test_kernels.o -o laccuda -std=c++17  -O3 -lstdc++ -lcuda
+laccuda.cpp: In function 'void build_adj_mat(std::vector<kmer_pair>)':
+laccuda.cpp:92:36: error: ISO C++ forbids comparison between pointer and integer [-fpermissive]
+     if (next_kmer.backwardExt() != "F") continue;
+                                    ^~~
+laccuda.cpp:96:38: error: ISO C++ forbids comparison between pointer and integer [-fpermissive]
+     while (next_kmer.forwardExt() != "F"){
+                                      ^~~
+laccuda.cpp:102:24: error: 'class std::map<pkmer_t, long unsigned int>' has no member named 'contains'
+       if (!kmer_to_num.contains(next_kmer.kmer)){
+                        ^~~~~~~~
+laccuda.cpp:110:24: error: 'class std::map<pkmer_t, long unsigned int>' has no member named 'contains'
+       if (!kmer_to_num.contains(next_kmer.next_kmer())){
+                        ^~~~~~~~
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:65,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_function.h: In instantiation of 'constexpr bool std::less<_Tp>::operator()(const _Tp&, const _Tp&) const [with _Tp = pkmer_t]':
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_map.h:497:32:   required from 'std::map<_Key, _Tp, _Compare, _Alloc>::mapped_type& std::map<_Key, _Tp, _Compare, _Alloc>::operator[](const key_type&) [with _Key = pkmer_t; _Tp = kmer_pair; _Compare = std::less<pkmer_t>; _Alloc = std::allocator<std::pair<const pkmer_t, kmer_pair> >; std::map<_Key, _Tp, _Compare, _Alloc>::mapped_type = kmer_pair; std::map<_Key, _Tp, _Compare, _Alloc>::key_type = pkmer_t]'
+laccuda.cpp:81:31:   required from here
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_function.h:386:20: error: no match for 'operator<' (operand types are 'const pkmer_t' and 'const pkmer_t')
+       { return __x < __y; }
+                ~~~~^~~~~
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/stl_algobase.h:64,
+                 from /opt/gcc/8.3.0/snos/include/g++/list:60,
+                 from laccuda.cpp:5:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_pair.h:454:5: note: candidate: 'template<class _T1, class _T2> constexpr bool std::operator<(const std::pair<_T1, _T2>&, const std::pair<_T1, _T2>&)'
+     operator<(const pair<_T1, _T2>& __x, const pair<_T1, _T2>& __y)
+     ^~~~~~~~
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_pair.h:454:5: note:   template argument deduction/substitution failed:
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:65,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_function.h:386:20: note:   'const pkmer_t' is not derived from 'const std::pair<_T1, _T2>'
+       { return __x < __y; }
+                ~~~~^~~~~
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/stl_algobase.h:67,
+                 from /opt/gcc/8.3.0/snos/include/g++/list:60,
+                 from laccuda.cpp:5:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_iterator.h:308:5: note: candidate: 'template<class _Iterator> constexpr bool std::operator<(const std::reverse_iterator<_Iterator>&, const std::reverse_iterator<_Iterator>&)'
+     operator<(const reverse_iterator<_Iterator>& __x,
+     ^~~~~~~~
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_iterator.h:308:5: note:   template argument deduction/substitution failed:
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:65,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_function.h:386:20: note:   'const pkmer_t' is not derived from 'const std::reverse_iterator<_Iterator>'
+       { return __x < __y; }
+                ~~~~^~~~~
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/stl_algobase.h:67,
+                 from /opt/gcc/8.3.0/snos/include/g++/list:60,
+                 from laccuda.cpp:5:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_iterator.h:346:5: note: candidate: 'template<class _IteratorL, class _IteratorR> constexpr bool std::operator<(const std::reverse_iterator<_Iterator>&, const std::reverse_iterator<_IteratorR>&)'
+     operator<(const reverse_iterator<_IteratorL>& __x,
+     ^~~~~~~~
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_iterator.h:346:5: note:   template argument deduction/substitution failed:
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:65,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_function.h:386:20: note:   'const pkmer_t' is not derived from 'const std::reverse_iterator<_Iterator>'
+       { return __x < __y; }
+                ~~~~^~~~~
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/stl_algobase.h:67,
+                 from /opt/gcc/8.3.0/snos/include/g++/list:60,
+                 from laccuda.cpp:5:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_iterator.h:1139:5: note: candidate: 'template<class _IteratorL, class _IteratorR> constexpr bool std::operator<(const std::move_iterator<_IteratorL>&, const std::move_iterator<_IteratorR>&)'
+     operator<(const move_iterator<_IteratorL>& __x,
+     ^~~~~~~~
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_iterator.h:1139:5: note:   template argument deduction/substitution failed:
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:65,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_function.h:386:20: note:   'const pkmer_t' is not derived from 'const std::move_iterator<_IteratorL>'
+       { return __x < __y; }
+                ~~~~^~~~~
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/stl_algobase.h:67,
+                 from /opt/gcc/8.3.0/snos/include/g++/list:60,
+                 from laccuda.cpp:5:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_iterator.h:1145:5: note: candidate: 'template<class _Iterator> constexpr bool std::operator<(const std::move_iterator<_IteratorL>&, const std::move_iterator<_IteratorL>&)'
+     operator<(const move_iterator<_Iterator>& __x,
+     ^~~~~~~~
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_iterator.h:1145:5: note:   template argument deduction/substitution failed:
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:65,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_function.h:386:20: note:   'const pkmer_t' is not derived from 'const std::move_iterator<_IteratorL>'
+       { return __x < __y; }
+                ~~~~^~~~~
+In file included from /opt/gcc/8.3.0/snos/include/g++/list:63,
+                 from laccuda.cpp:5:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_list.h:2021:5: note: candidate: 'template<class _Tp, class _Alloc> bool std::operator<(const std::__cxx11::list<_Tp, _Alloc>&, const std::__cxx11::list<_Tp, _Alloc>&)'
+     operator<(const list<_Tp, _Alloc>& __x, const list<_Tp, _Alloc>& __y)
+     ^~~~~~~~
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_list.h:2021:5: note:   template argument deduction/substitution failed:
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:65,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_function.h:386:20: note:   'const pkmer_t' is not derived from 'const std::__cxx11::list<_Tp, _Alloc>'
+       { return __x < __y; }
+                ~~~~^~~~~
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/basic_string.h:48,
+                 from /opt/gcc/8.3.0/snos/include/g++/string:52,
+                 from /opt/gcc/8.3.0/snos/include/g++/stdexcept:39,
+                 from /opt/gcc/8.3.0/snos/include/g++/optional:38,
+                 from /opt/gcc/8.3.0/snos/include/g++/bits/node_handle.h:39,
+                 from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:72,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/string_view:472:5: note: candidate: 'template<class _CharT, class _Traits> constexpr bool std::operator<(std::basic_string_view<_CharT, _Traits>, std::basic_string_view<_CharT, _Traits>)'
+     operator< (basic_string_view<_CharT, _Traits> __x,
+     ^~~~~~~~
+/opt/gcc/8.3.0/snos/include/g++/string_view:472:5: note:   template argument deduction/substitution failed:
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:65,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_function.h:386:20: note:   'pkmer_t' is not derived from 'std::basic_string_view<_CharT, _Traits>'
+       { return __x < __y; }
+                ~~~~^~~~~
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/basic_string.h:48,
+                 from /opt/gcc/8.3.0/snos/include/g++/string:52,
+                 from /opt/gcc/8.3.0/snos/include/g++/stdexcept:39,
+                 from /opt/gcc/8.3.0/snos/include/g++/optional:38,
+                 from /opt/gcc/8.3.0/snos/include/g++/bits/node_handle.h:39,
+                 from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:72,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/string_view:478:5: note: candidate: 'template<class _CharT, class _Traits> constexpr bool std::operator<(std::basic_string_view<_CharT, _Traits>, std::__detail::__idt<std::basic_string_view<_CharT, _Traits> >)'
+     operator< (basic_string_view<_CharT, _Traits> __x,
+     ^~~~~~~~
+/opt/gcc/8.3.0/snos/include/g++/string_view:478:5: note:   template argument deduction/substitution failed:
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:65,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_function.h:386:20: note:   'pkmer_t' is not derived from 'std::basic_string_view<_CharT, _Traits>'
+       { return __x < __y; }
+                ~~~~^~~~~
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/basic_string.h:48,
+                 from /opt/gcc/8.3.0/snos/include/g++/string:52,
+                 from /opt/gcc/8.3.0/snos/include/g++/stdexcept:39,
+                 from /opt/gcc/8.3.0/snos/include/g++/optional:38,
+                 from /opt/gcc/8.3.0/snos/include/g++/bits/node_handle.h:39,
+                 from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:72,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/string_view:484:5: note: candidate: 'template<class _CharT, class _Traits> constexpr bool std::operator<(std::__detail::__idt<std::basic_string_view<_CharT, _Traits> >, std::basic_string_view<_CharT, _Traits>)'
+     operator< (__detail::__idt<basic_string_view<_CharT, _Traits>> __x,
+     ^~~~~~~~
+/opt/gcc/8.3.0/snos/include/g++/string_view:484:5: note:   template argument deduction/substitution failed:
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:65,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_function.h:386:20: note:   'pkmer_t' is not derived from 'std::basic_string_view<_CharT, _Traits>'
+       { return __x < __y; }
+                ~~~~^~~~~
+In file included from /opt/gcc/8.3.0/snos/include/g++/string:52,
+                 from /opt/gcc/8.3.0/snos/include/g++/stdexcept:39,
+                 from /opt/gcc/8.3.0/snos/include/g++/optional:38,
+                 from /opt/gcc/8.3.0/snos/include/g++/bits/node_handle.h:39,
+                 from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:72,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/bits/basic_string.h:6133:5: note: candidate: 'template<class _CharT, class _Traits, class _Alloc> bool std::operator<(const std::__cxx11::basic_string<_CharT, _Traits, _Allocator>&, const std::__cxx11::basic_string<_CharT, _Traits, _Allocator>&)'
+     operator<(const basic_string<_CharT, _Traits, _Alloc>& __lhs,
+     ^~~~~~~~
+/opt/gcc/8.3.0/snos/include/g++/bits/basic_string.h:6133:5: note:   template argument deduction/substitution failed:
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:65,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_function.h:386:20: note:   'const pkmer_t' is not derived from 'const std::__cxx11::basic_string<_CharT, _Traits, _Allocator>'
+       { return __x < __y; }
+                ~~~~^~~~~
+In file included from /opt/gcc/8.3.0/snos/include/g++/string:52,
+                 from /opt/gcc/8.3.0/snos/include/g++/stdexcept:39,
+                 from /opt/gcc/8.3.0/snos/include/g++/optional:38,
+                 from /opt/gcc/8.3.0/snos/include/g++/bits/node_handle.h:39,
+                 from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:72,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/bits/basic_string.h:6146:5: note: candidate: 'template<class _CharT, class _Traits, class _Alloc> bool std::operator<(const std::__cxx11::basic_string<_CharT, _Traits, _Allocator>&, const _CharT*)'
+     operator<(const basic_string<_CharT, _Traits, _Alloc>& __lhs,
+     ^~~~~~~~
+/opt/gcc/8.3.0/snos/include/g++/bits/basic_string.h:6146:5: note:   template argument deduction/substitution failed:
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:65,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_function.h:386:20: note:   'const pkmer_t' is not derived from 'const std::__cxx11::basic_string<_CharT, _Traits, _Allocator>'
+       { return __x < __y; }
+                ~~~~^~~~~
+In file included from /opt/gcc/8.3.0/snos/include/g++/string:52,
+                 from /opt/gcc/8.3.0/snos/include/g++/stdexcept:39,
+                 from /opt/gcc/8.3.0/snos/include/g++/optional:38,
+                 from /opt/gcc/8.3.0/snos/include/g++/bits/node_handle.h:39,
+                 from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:72,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/bits/basic_string.h:6158:5: note: candidate: 'template<class _CharT, class _Traits, class _Alloc> bool std::operator<(const _CharT*, const std::__cxx11::basic_string<_CharT, _Traits, _Allocator>&)'
+     operator<(const _CharT* __lhs,
+     ^~~~~~~~
+/opt/gcc/8.3.0/snos/include/g++/bits/basic_string.h:6158:5: note:   template argument deduction/substitution failed:
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:65,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_function.h:386:20: note:   mismatched types 'const _CharT*' and 'pkmer_t'
+       { return __x < __y; }
+                ~~~~^~~~~
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/node_handle.h:39,
+                 from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:72,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/optional:1297:5: note: candidate: 'template<class _Tp, class _Up> constexpr std::__optional_relop_t<decltype ((declval<_Tp>() < declval<_Up>()))> std::operator<(const std::optional<_Tp>&, const std::optional<_Up>&)'
+     operator<(const optional<_Tp>& __lhs, const optional<_Up>& __rhs)
+     ^~~~~~~~
+/opt/gcc/8.3.0/snos/include/g++/optional:1297:5: note:   template argument deduction/substitution failed:
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:65,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_function.h:386:20: note:   'const pkmer_t' is not derived from 'const std::optional<_Tp>'
+       { return __x < __y; }
+                ~~~~^~~~~
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/node_handle.h:39,
+                 from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:72,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/optional:1350:5: note: candidate: 'template<class _Tp> constexpr bool std::operator<(const std::optional<_Tp>&, std::nullopt_t)'
+     operator<(const optional<_Tp>& /* __lhs */, nullopt_t) noexcept
+     ^~~~~~~~
+/opt/gcc/8.3.0/snos/include/g++/optional:1350:5: note:   template argument deduction/substitution failed:
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:65,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_function.h:386:20: note:   'const pkmer_t' is not derived from 'const std::optional<_Tp>'
+       { return __x < __y; }
+                ~~~~^~~~~
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/node_handle.h:39,
+                 from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:72,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/optional:1355:5: note: candidate: 'template<class _Tp> constexpr bool std::operator<(std::nullopt_t, const std::optional<_Tp>&)'
+     operator<(nullopt_t, const optional<_Tp>& __rhs) noexcept
+     ^~~~~~~~
+/opt/gcc/8.3.0/snos/include/g++/optional:1355:5: note:   template argument deduction/substitution failed:
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:65,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_function.h:386:20: note:   'const pkmer_t' is not derived from 'const std::optional<_Tp>'
+       { return __x < __y; }
+                ~~~~^~~~~
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/node_handle.h:39,
+                 from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:72,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/optional:1415:5: note: candidate: 'template<class _Tp, class _Up> constexpr std::__optional_relop_t<decltype ((declval<_Tp>() < declval<_Up>()))> std::operator<(const std::optional<_Tp>&, const _Up&)'
+     operator<(const optional<_Tp>& __lhs, const _Up& __rhs)
+     ^~~~~~~~
+/opt/gcc/8.3.0/snos/include/g++/optional:1415:5: note:   template argument deduction/substitution failed:
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:65,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_function.h:386:20: note:   'const pkmer_t' is not derived from 'const std::optional<_Tp>'
+       { return __x < __y; }
+                ~~~~^~~~~
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/node_handle.h:39,
+                 from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:72,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/optional:1421:5: note: candidate: 'template<class _Tp, class _Up> constexpr std::__optional_relop_t<decltype ((declval<_Up>() < declval<_Tp>()))> std::operator<(const _Up&, const std::optional<_Tp>&)'
+     operator<(const _Up& __lhs, const optional<_Tp>& __rhs)
+     ^~~~~~~~
+/opt/gcc/8.3.0/snos/include/g++/optional:1421:5: note:   template argument deduction/substitution failed:
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:65,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_function.h:386:20: note:   'const pkmer_t' is not derived from 'const std::optional<_Tp>'
+       { return __x < __y; }
+                ~~~~^~~~~
+In file included from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:1559:5: note: candidate: 'template<class _Key, class _Val, class _KeyOfValue, class _Compare, class _Alloc> bool std::operator<(const std::_Rb_tree<_Key, _Val, _KeyOfValue, _Compare, _Alloc>&, const std::_Rb_tree<_Key, _Val, _KeyOfValue, _Compare, _Alloc>&)'
+     operator<(const _Rb_tree<_Key, _Val, _KeyOfValue, _Compare, _Alloc>& __x,
+     ^~~~~~~~
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:1559:5: note:   template argument deduction/substitution failed:
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:65,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_function.h:386:20: note:   'const pkmer_t' is not derived from 'const std::_Rb_tree<_Key, _Val, _KeyOfValue, _Compare, _Alloc>'
+       { return __x < __y; }
+                ~~~~^~~~~
+In file included from /opt/gcc/8.3.0/snos/include/g++/set:61,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_set.h:975:5: note: candidate: 'template<class _Key, class _Compare, class _Alloc> bool std::operator<(const std::set<_Key, _Compare, _Allocator>&, const std::set<_Key, _Compare, _Allocator>&)'
+     operator<(const set<_Key, _Compare, _Alloc>& __x,
+     ^~~~~~~~
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_set.h:975:5: note:   template argument deduction/substitution failed:
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:65,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_function.h:386:20: note:   'const pkmer_t' is not derived from 'const std::set<_Key, _Compare, _Allocator>'
+       { return __x < __y; }
+                ~~~~^~~~~
+In file included from /opt/gcc/8.3.0/snos/include/g++/set:62,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_multiset.h:960:5: note: candidate: 'template<class _Key, class _Compare, class _Alloc> bool std::operator<(const std::multiset<_Key, _Compare, _Allocator>&, const std::multiset<_Key, _Compare, _Allocator>&)'
+     operator<(const multiset<_Key, _Compare, _Alloc>& __x,
+     ^~~~~~~~
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_multiset.h:960:5: note:   template argument deduction/substitution failed:
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:65,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_function.h:386:20: note:   'const pkmer_t' is not derived from 'const std::multiset<_Key, _Compare, _Allocator>'
+       { return __x < __y; }
+                ~~~~^~~~~
+In file included from /opt/gcc/8.3.0/snos/include/g++/vector:64,
+                 from laccuda.cpp:8:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_vector.h:1770:5: note: candidate: 'template<class _Tp, class _Alloc> bool std::operator<(const std::vector<_Tp, _Alloc>&, const std::vector<_Tp, _Alloc>&)'
+     operator<(const vector<_Tp, _Alloc>& __x, const vector<_Tp, _Alloc>& __y)
+     ^~~~~~~~
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_vector.h:1770:5: note:   template argument deduction/substitution failed:
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:65,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_function.h:386:20: note:   'const pkmer_t' is not derived from 'const std::vector<_Tp, _Alloc>'
+       { return __x < __y; }
+                ~~~~^~~~~
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/ios_base.h:46,
+                 from /opt/gcc/8.3.0/snos/include/g++/ios:42,
+                 from /opt/gcc/8.3.0/snos/include/g++/ostream:38,
+                 from /opt/gcc/8.3.0/snos/include/g++/iostream:39,
+                 from laccuda.cpp:10:
+/opt/gcc/8.3.0/snos/include/g++/system_error:208:3: note: candidate: 'bool std::operator<(const std::error_code&, const std::error_code&)'
+   operator<(const error_code& __lhs, const error_code& __rhs) noexcept
+   ^~~~~~~~
+/opt/gcc/8.3.0/snos/include/g++/system_error:208:3: note:   no known conversion for argument 1 from 'const pkmer_t' to 'const std::error_code&'
+/opt/gcc/8.3.0/snos/include/g++/system_error:282:3: note: candidate: 'bool std::operator<(const std::error_condition&, const std::error_condition&)'
+   operator<(const error_condition& __lhs,
+   ^~~~~~~~
+/opt/gcc/8.3.0/snos/include/g++/system_error:282:3: note:   no known conversion for argument 1 from 'const pkmer_t' to 'const std::error_condition&'
+In file included from /opt/gcc/8.3.0/snos/include/g++/tuple:39,
+                 from /opt/gcc/8.3.0/snos/include/g++/bits/unique_ptr.h:37,
+                 from /opt/gcc/8.3.0/snos/include/g++/memory:80,
+                 from read_kmers.hpp:7,
+                 from laccuda.cpp:21:
+/opt/gcc/8.3.0/snos/include/g++/array:262:5: note: candidate: 'template<class _Tp, long unsigned int _Nm> bool std::operator<(const std::array<_Tp, _Nm>&, const std::array<_Tp, _Nm>&)'
+     operator<(const array<_Tp, _Nm>& __a, const array<_Tp, _Nm>& __b)
+     ^~~~~~~~
+/opt/gcc/8.3.0/snos/include/g++/array:262:5: note:   template argument deduction/substitution failed:
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:65,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_function.h:386:20: note:   'const pkmer_t' is not derived from 'const std::array<_Tp, _Nm>'
+       { return __x < __y; }
+                ~~~~^~~~~
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/unique_ptr.h:37,
+                 from /opt/gcc/8.3.0/snos/include/g++/memory:80,
+                 from read_kmers.hpp:7,
+                 from laccuda.cpp:21:
+/opt/gcc/8.3.0/snos/include/g++/tuple:1426:5: note: candidate: 'template<class ... _TElements, class ... _UElements> constexpr bool std::operator<(const std::tuple<_Tps ...>&, const std::tuple<_Args2 ...>&)'
+     operator<(const tuple<_TElements...>& __t,
+     ^~~~~~~~
+/opt/gcc/8.3.0/snos/include/g++/tuple:1426:5: note:   template argument deduction/substitution failed:
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:65,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_function.h:386:20: note:   'const pkmer_t' is not derived from 'const std::tuple<_Tps ...>'
+       { return __x < __y; }
+                ~~~~^~~~~
+In file included from /opt/gcc/8.3.0/snos/include/g++/memory:80,
+                 from read_kmers.hpp:7,
+                 from laccuda.cpp:21:
+/opt/gcc/8.3.0/snos/include/g++/bits/unique_ptr.h:723:5: note: candidate: 'template<class _Tp, class _Dp, class _Up, class _Ep> bool std::operator<(const std::unique_ptr<_Tp, _Dp>&, const std::unique_ptr<_Up, _Ep>&)'
+     operator<(const unique_ptr<_Tp, _Dp>& __x,
+     ^~~~~~~~
+/opt/gcc/8.3.0/snos/include/g++/bits/unique_ptr.h:723:5: note:   template argument deduction/substitution failed:
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:65,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_function.h:386:20: note:   'const pkmer_t' is not derived from 'const std::unique_ptr<_Tp, _Dp>'
+       { return __x < __y; }
+                ~~~~^~~~~
+In file included from /opt/gcc/8.3.0/snos/include/g++/memory:80,
+                 from read_kmers.hpp:7,
+                 from laccuda.cpp:21:
+/opt/gcc/8.3.0/snos/include/g++/bits/unique_ptr.h:734:5: note: candidate: 'template<class _Tp, class _Dp> bool std::operator<(const std::unique_ptr<_Tp, _Dp>&, std::nullptr_t)'
+     operator<(const unique_ptr<_Tp, _Dp>& __x, nullptr_t)
+     ^~~~~~~~
+/opt/gcc/8.3.0/snos/include/g++/bits/unique_ptr.h:734:5: note:   template argument deduction/substitution failed:
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:65,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_function.h:386:20: note:   'const pkmer_t' is not derived from 'const std::unique_ptr<_Tp, _Dp>'
+       { return __x < __y; }
+                ~~~~^~~~~
+In file included from /opt/gcc/8.3.0/snos/include/g++/memory:80,
+                 from read_kmers.hpp:7,
+                 from laccuda.cpp:21:
+/opt/gcc/8.3.0/snos/include/g++/bits/unique_ptr.h:740:5: note: candidate: 'template<class _Tp, class _Dp> bool std::operator<(std::nullptr_t, const std::unique_ptr<_Tp, _Dp>&)'
+     operator<(nullptr_t, const unique_ptr<_Tp, _Dp>& __x)
+     ^~~~~~~~
+/opt/gcc/8.3.0/snos/include/g++/bits/unique_ptr.h:740:5: note:   template argument deduction/substitution failed:
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:65,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_function.h:386:20: note:   'const pkmer_t' is not derived from 'const std::unique_ptr<_Tp, _Dp>'
+       { return __x < __y; }
+                ~~~~^~~~~
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/shared_ptr.h:52,
+                 from /opt/gcc/8.3.0/snos/include/g++/memory:81,
+                 from read_kmers.hpp:7,
+                 from laccuda.cpp:21:
+/opt/gcc/8.3.0/snos/include/g++/bits/shared_ptr_base.h:1442:5: note: candidate: 'template<class _Tp, class _Up, __gnu_cxx::_Lock_policy _Lp> bool std::operator<(const std::__shared_ptr<_Tp1, _Lp>&, const std::__shared_ptr<_Tp2, _Lp>&)'
+     operator<(const __shared_ptr<_Tp, _Lp>& __a,
+     ^~~~~~~~
+/opt/gcc/8.3.0/snos/include/g++/bits/shared_ptr_base.h:1442:5: note:   template argument deduction/substitution failed:
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:65,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_function.h:386:20: note:   'const pkmer_t' is not derived from 'const std::__shared_ptr<_Tp1, _Lp>'
+       { return __x < __y; }
+                ~~~~^~~~~
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/shared_ptr.h:52,
+                 from /opt/gcc/8.3.0/snos/include/g++/memory:81,
+                 from read_kmers.hpp:7,
+                 from laccuda.cpp:21:
+/opt/gcc/8.3.0/snos/include/g++/bits/shared_ptr_base.h:1453:5: note: candidate: 'template<class _Tp, __gnu_cxx::_Lock_policy _Lp> bool std::operator<(const std::__shared_ptr<_Tp, _Lp>&, std::nullptr_t)'
+     operator<(const __shared_ptr<_Tp, _Lp>& __a, nullptr_t) noexcept
+     ^~~~~~~~
+/opt/gcc/8.3.0/snos/include/g++/bits/shared_ptr_base.h:1453:5: note:   template argument deduction/substitution failed:
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:65,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_function.h:386:20: note:   'const pkmer_t' is not derived from 'const std::__shared_ptr<_Tp, _Lp>'
+       { return __x < __y; }
+                ~~~~^~~~~
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/shared_ptr.h:52,
+                 from /opt/gcc/8.3.0/snos/include/g++/memory:81,
+                 from read_kmers.hpp:7,
+                 from laccuda.cpp:21:
+/opt/gcc/8.3.0/snos/include/g++/bits/shared_ptr_base.h:1461:5: note: candidate: 'template<class _Tp, __gnu_cxx::_Lock_policy _Lp> bool std::operator<(std::nullptr_t, const std::__shared_ptr<_Tp, _Lp>&)'
+     operator<(nullptr_t, const __shared_ptr<_Tp, _Lp>& __a) noexcept
+     ^~~~~~~~
+/opt/gcc/8.3.0/snos/include/g++/bits/shared_ptr_base.h:1461:5: note:   template argument deduction/substitution failed:
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:65,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_function.h:386:20: note:   'const pkmer_t' is not derived from 'const std::__shared_ptr<_Tp, _Lp>'
+       { return __x < __y; }
+                ~~~~^~~~~
+In file included from /opt/gcc/8.3.0/snos/include/g++/memory:81,
+                 from read_kmers.hpp:7,
+                 from laccuda.cpp:21:
+/opt/gcc/8.3.0/snos/include/g++/bits/shared_ptr.h:413:5: note: candidate: 'template<class _Tp, class _Up> bool std::operator<(const std::shared_ptr<_Tp>&, const std::shared_ptr<_Tp>&)'
+     operator<(const shared_ptr<_Tp>& __a, const shared_ptr<_Up>& __b) noexcept
+     ^~~~~~~~
+/opt/gcc/8.3.0/snos/include/g++/bits/shared_ptr.h:413:5: note:   template argument deduction/substitution failed:
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:65,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_function.h:386:20: note:   'const pkmer_t' is not derived from 'const std::shared_ptr<_Tp>'
+       { return __x < __y; }
+                ~~~~^~~~~
+In file included from /opt/gcc/8.3.0/snos/include/g++/memory:81,
+                 from read_kmers.hpp:7,
+                 from laccuda.cpp:21:
+/opt/gcc/8.3.0/snos/include/g++/bits/shared_ptr.h:423:5: note: candidate: 'template<class _Tp> bool std::operator<(const std::shared_ptr<_Tp>&, std::nullptr_t)'
+     operator<(const shared_ptr<_Tp>& __a, nullptr_t) noexcept
+     ^~~~~~~~
+/opt/gcc/8.3.0/snos/include/g++/bits/shared_ptr.h:423:5: note:   template argument deduction/substitution failed:
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:65,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_function.h:386:20: note:   'const pkmer_t' is not derived from 'const std::shared_ptr<_Tp>'
+       { return __x < __y; }
+                ~~~~^~~~~
+In file included from /opt/gcc/8.3.0/snos/include/g++/memory:81,
+                 from read_kmers.hpp:7,
+                 from laccuda.cpp:21:
+/opt/gcc/8.3.0/snos/include/g++/bits/shared_ptr.h:431:5: note: candidate: 'template<class _Tp> bool std::operator<(std::nullptr_t, const std::shared_ptr<_Tp>&)'
+     operator<(nullptr_t, const shared_ptr<_Tp>& __a) noexcept
+     ^~~~~~~~
+/opt/gcc/8.3.0/snos/include/g++/bits/shared_ptr.h:431:5: note:   template argument deduction/substitution failed:
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:65,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_function.h:386:20: note:   'const pkmer_t' is not derived from 'const std::shared_ptr<_Tp>'
+       { return __x < __y; }
+                ~~~~^~~~~
+In file included from /opt/gcc/8.3.0/snos/include/g++/map:61,
+                 from laccuda.cpp:26:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_map.h:1451:5: note: candidate: 'template<class _Key, class _Tp, class _Compare, class _Alloc> bool std::operator<(const std::map<_Key, _Tp, _Compare, _Allocator>&, const std::map<_Key, _Tp, _Compare, _Allocator>&)'
+     operator<(const map<_Key, _Tp, _Compare, _Alloc>& __x,
+     ^~~~~~~~
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_map.h:1451:5: note:   template argument deduction/substitution failed:
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:65,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_function.h:386:20: note:   'const pkmer_t' is not derived from 'const std::map<_Key, _Tp, _Compare, _Allocator>'
+       { return __x < __y; }
+                ~~~~^~~~~
+In file included from /opt/gcc/8.3.0/snos/include/g++/map:62,
+                 from laccuda.cpp:26:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_multimap.h:1115:5: note: candidate: 'template<class _Key, class _Tp, class _Compare, class _Alloc> bool std::operator<(const std::multimap<_Key, _Tp, _Compare, _Allocator>&, const std::multimap<_Key, _Tp, _Compare, _Allocator>&)'
+     operator<(const multimap<_Key, _Tp, _Compare, _Alloc>& __x,
+     ^~~~~~~~
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_multimap.h:1115:5: note:   template argument deduction/substitution failed:
+In file included from /opt/gcc/8.3.0/snos/include/g++/bits/stl_tree.h:65,
+                 from /opt/gcc/8.3.0/snos/include/g++/set:60,
+                 from laccuda.cpp:7:
+/opt/gcc/8.3.0/snos/include/g++/bits/stl_function.h:386:20: note:   'const pkmer_t' is not derived from 'const std::multimap<_Key, _Tp, _Compare, _Allocator>'
+       { return __x < __y; }
+                ~~~~^~~~~
+make: *** [Makefile:24: laccuda] Error 1

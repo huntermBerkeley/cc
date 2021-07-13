@@ -1,0 +1,12 @@
+#!/bin/bash
+#SBATCH -A mp309
+#SBATCH -N 1
+#SBATCH -C gpu
+#SBATCH -q regular
+#SBATCH -t 60:00
+#SBATCH -c 10
+#SBATCH -G 1
+#SBATCH -o test_output.dat
+
+echo "Laccuda on full test dataset"
+srun -N 1 -n 1 ./laccuda $SCRATCH/my_datasets/test.txt

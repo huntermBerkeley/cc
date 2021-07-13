@@ -12,7 +12,7 @@ cuda_run: cuda_run.cpp test_kernels.hpp test_kernels.o
 		nvcc cuda_run.cpp test_kernels.o -o cuda_run -std=c++17  -O3 -lstdc++ -lcuda
 
 test_kernels.o:
-		nvcc -c test_kernels.cu -O3 -o test_kernels.o
+		nvcc -dc -c test_kernels.cu -O3 -o test_kernels.o
 
 simple_semiring_test:
 	nvcc simple_semiring_test.cpp test_kernels.o -o simple_semiring -std=c++17  -O3 -lstdc++ -lcuda

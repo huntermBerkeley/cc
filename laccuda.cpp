@@ -6,7 +6,7 @@
 #include <numeric>
 #include <set>
 #include <vector>
-#include  <stdlib.h>
+#include <stdlib.h>
 #include <iostream>
 #include <cuda_runtime_api.h>
 #include <cuda.h>
@@ -540,6 +540,10 @@ void printMat(uint64_t nnz, char* characters, uint64_t *rows, uint64_t* cols){
 int main(int argc, char** argv) {
 
 
+    //start timing
+    auto start = std::chrono::high_resolution_clock::now();
+
+
     //prep matrix info
     std::string kmer_fname = std::string(argv[1]);
     int ks = kmer_size(kmer_fname);
@@ -572,13 +576,13 @@ int main(int argc, char** argv) {
 
     //print out some samples
 
-    for (int i =0; i < 10; i++){
-      printf("%llu -> %llu: %c\n", perfrows[i], perfcols[i], perfvals[i]);
-    }
+    // for (int i =0; i < 10; i++){
+    //   printf("%llu -> %llu: %c\n", perfrows[i], perfcols[i], perfvals[i]);
+    // }
 
     //now run test
-    //this is successful for perf runtime
-    build_kmers_from_adj(perf_starts, perf_nnz, perfvals, perfrows, perfcols);
+    //this is successful for all runtimes
+    //build_kmers_from_adj(perf_starts, perf_nnz, perfvals, perfrows, perfcols);
 
 
     //now construct starts
@@ -592,20 +596,20 @@ int main(int argc, char** argv) {
 
     //check output for verify
     //on test case looks good
-    printf("Visual sanity check on starts\n");
-    int min_size = 10;
-    if (perf_starts.size() < min_size){
-      min_size = perf_starts.size();
-    }
-    for (int i=0; i < min_size; i++){
-      cout << i << ": " << std::get<0>(perf_starts.at(i)).kmer_str() << endl;
-
-      cout << i << ": ";
-      for (int j = 0; j < 10; j++){
-        cout << startVals[i*MAX_VEC+j];
-      }
-      cout << endl;
-    }
+    // printf("Visual sanity check on starts\n");
+    // int min_size = 10;
+    // if (perf_starts.size() < min_size){
+    //   min_size = perf_starts.size();
+    // }
+    // for (int i=0; i < min_size; i++){
+    //   cout << i << ": " << std::get<0>(perf_starts.at(i)).kmer_str() << endl;
+    //
+    //   cout << i << ": ";
+    //   for (int j = 0; j < 10; j++){
+    //     cout << startVals[i*MAX_VEC+j];
+    //   }
+    //   cout << endl;
+    // }
 
     std::vector<uint64_t> outRows2 = gen_outRows(perf_starts, perfrows);
 
@@ -620,284 +624,23 @@ int main(int argc, char** argv) {
 
     copy_to_cuda(perf_nnz, perfvals, perfrows, perfcols, &perfvalsCuda, &perfrowsCuda, &perfcolsCuda);
 
+    auto midpoint = std::chrono::high_resolution_clock::now();
+
+    std::chrono::duration<double> diff = midpoint-start;
+
+    std::cout << "Time required for setup: " << diff.count() << " s\n";
+
     //connected components call
-    iterative_cuda_solver(perf_nnz, n_kmers, perfrowsCuda, perfcolsCuda, perfvalsCuda, outRows2, startNnz, startVals, startLens, startRows);
-    return 0;
+    //iterative_cuda_solver(perf_nnz, n_kmers, perfrowsCuda, perfcolsCuda, perfvalsCuda, outRows2, startNnz, startVals, startLens, startRows);
+    cc_len(perf_nnz, n_kmers, perfrowsCuda, perfcolsCuda, perfvalsCuda, outRows2, startNnz, startVals, startLens, startRows);
 
-
-    //iterate and count
-    size_t counter = 0;
-    for (size_t i = 0; i < kmers.size(); i++){
-      pkmer_t kmer = kmers.at(i).kmer;
-
-
-      //IDEA: Could these be counted more than once???
-
-      //hash of a hash is funky?
-
-
-      if (map.count(kmer.get()) != 0){
-        cout << "Repeat hit, these should be cleaned" << endl;
-        cout << "Original: " << err_map[kmer.hash()].kmer_str() << " "<< err_map[kmer.hash()].forwardExt() << endl;
-        cout << "New: " << kmers.at(i).kmer_str() << " "<< kmers.at(i).forwardExt() << endl;
-        continue;
-      } else {
-        map[kmer.get()] = counter;
-        err_map[kmer.hash()] = kmers.at(i);
-        counter++;
-      }
-    }
-
-    //counter gets reused and i don't want to break Things
-    //so reset to be a new max val, we will want to increment this later
-    size_t max_counter = counter;
-
-
-    //NEW add ons
-    //start kmers need to be appended as an item in the matrix:
-    //they are a nonexistent kmer that connects to themselves
-    //firstly, we need to allocate space
-    //ever kmer has
-
-
-    //potentially sort
-    //would this improve performance?
-    //would definitely improve memmory accesses on one dim, but we're already in row format rn :D
-
-    uint64_t nnz = 0;
-    for (int i = 0; i < kmers.size(); i++){
-
-      //valid edge
-      if (kmers.at(i).forwardExt() != 'F'){
-        nnz+=1;
-      }
-
-
-    }
-
-
-    //first define sparse matrix
-    std::vector<uint64_t> outRows;
-
-    //grab start extensions, we'll repair these  at the end
-    //this is opposed to initial modifications because there isn't
-    //really a  point in  copying these over log(n) times, especially
-    // because we know right where they go.
-    std::vector<kmer_pair> outKmers;
-
-    uint64_t num_vert = counter;
-
-    //generic setup
-    // uint64_t nnz = 5;
-    // uint64_t num_vert = 6;
-    // cout << "Working on " << nnz << " nonzeros." << endl;
-    //
-    // //local copy of matrix
-    char *matLocal = new char[nnz];
-    uint64_t *matRowLocal = new uint64_t[nnz];
-    uint64_t *matColLocal = new uint64_t[nnz];
-    //
-    // matRowLocal[0] = 1;
-    // matColLocal[0] = 0;
-    // matLocal[0] = 'C';
-    //
-    // matRowLocal[1] = 2;
-    // matColLocal[1] = 1;
-    // matLocal[1] = 'T';
-    //
-    // matRowLocal[2] = 3;
-    // matColLocal[2] = 2;
-    // matLocal[2] = 'G';
-    //
-    // matRowLocal[3] = 4;
-    // matColLocal[3] = 3;
-    // matLocal[3] = 'C';
-    //
-    // matRowLocal[4] = 5;
-    // matColLocal[4] =5;
-    // matLocal[4] = 'A';
-
-    // 0 0 0 0 0 0
-    // 1 0 0 0 0 0
-    // 0 1 0 0 0 0
-    // 0 0 1 0 0 0
-    // 0 0 0 1 0 0
-    // 0 0 0 0 1 0
-
-
-
-
-
-    counter = 0;
-    for (int i = 0; i < kmers.size(); i++){
-
-
-
-      pkmer_t kmer = kmers.at(i).kmer;
-      uint64_t row = map.at(kmer.get());
-
-      pkmer_t forward = kmers.at(i).next_kmer();
-      //uint64_t fhash = forward.hash();
-
-      //fhash is the next kmer
-      if (map.count(forward.get()) == 0){
-
-
-
-        cout << "end at " <<  map.at(kmer.get()) << endl;
-
-        continue;
-
-      } else {
-
-        //positive match, add to matrix
-        //csr format
-        matLocal[counter] = kmers.at(i).forwardExt();
-        //was originall row/col
-        matRowLocal[counter] = row;
-        matColLocal[counter] = map.at(forward.get());
-
-        if (kmers.at(i).backwardExt() == 'F'){
-          cout << "Start at " << i << endl;
-          cout << matRowLocal[counter] << " points to " << matColLocal[counter] << endl;
-          outRows.push_back(matRowLocal[counter]);
-          outKmers.push_back(kmers.at(i));
-
-        }
-
-        //cut off last char for len count
-        //does this work?
-        counter++;
-
-
-        }
-
-
-    }
-
-    cout << counter << " filled" << endl;
-    printf("num_vert %llu\n",num_vert);
-    printf("size of mat %llu\n",nnz);
-    fflush(stdout);
-
-
-    char * matValsCuda;
-    uint64_t * matRowsCuda;
-    uint64_t * matColsCuda;
-
-
-    //don't need to allocate for  end of string, use as a character array is safe if there is a
-    //secondary buffer for lengths
-    cudaMalloc((void ** )&matValsCuda, nnz*sizeof(char));
-    cudaMalloc((void ** )&matRowsCuda, nnz*sizeof(uint64_t));
-    cudaMalloc((void ** )&matColsCuda, nnz*sizeof(uint64_t));
-
-
-    //memcopys
-    cudaMemcpy(matValsCuda, matLocal, nnz*sizeof(char), cudaMemcpyHostToDevice);
-
-    cudaMemcpy(matRowsCuda, matRowLocal, nnz*sizeof(uint64_t), cudaMemcpyHostToDevice);
-    cudaMemcpy(matColsCuda, matColLocal, nnz*sizeof(uint64_t), cudaMemcpyHostToDevice);
-
-
-
-    //printLens(nnz, lenVecLocal);
-
-
-
-
-    //printVec(nnz, vecLocal, lenVecLocal);
-
-    //print outrows
-
-
-    auto start = std::chrono::high_resolution_clock::now();
-
-    //fill_wrapper(nnz, valA,  rowIndA, colIndA);
-    //std::cout << "Output rows are : ";
-
-    // for(int i=0; i < outRows.size(); i++)
-    // std::cout << outRows.at(i) << ' ';
-    // cout << endl;
-
-    //fill_vector(nnz, vecB);
-
-    //print before
-    // cout << "Before" << endl;
-    // printVec(2, vecLoc, lenVec);
-
-    //rn matrix in csc format
-
-
-    //NEW: Prep outKmers as a trio of vals to be passed in
-    uint64_t maxOut = outKmers.size();
-
-    char * kmerVals;
-    uint64_t * kmerLens;
-    uint64_t * kmerParents;
-
-    cudaMallocManaged((void **)&kmerVals,maxOut*MAX_VEC*sizeof(char));
-
-    cudaMallocManaged((void **)&kmerLens,maxOut*sizeof(uint64_t));
-
-    cudaMallocManaged((void **)&kmerParents,maxOut*sizeof(uint64_t));
-
-
-    //iterate through outKmers
-
-    for(int i=0; i < outKmers.size(); i++){
-
-      pkmer_t kmer = outKmers.at(i).kmer;
-      for(int j=0; j < kmer.get().size(); j++){
-
-        //index into the results
-        kmerVals[i*MAX_VEC+j] = kmer.get()[j];
-
-
-
-      }
-      kmerLens[i] = kmer.get().size();
-
-      //set parent via cond hook
-      kmerParents[i] = map.at(kmer.get());
-
-
-    }
-
-
-
-
-    //fun flips
-    cc(nnz, num_vert, matRowsCuda, matColsCuda, matValsCuda, outRows, maxOut, kmerVals, kmerLens, kmerParents);
-
-
-    //passing  along kmers is a shitshow
-    //i guess build a managed list of chars/lens
-    //and pass  it along
-
-
-    //copy back
-    //cudaMemcpy(outLocal, components,  nnz*sizeof(uint64_t), cudaMemcpyDeviceToHost);
-
+    cudaDeviceSynchronize();
 
     auto end = std::chrono::high_resolution_clock::now();
 
-    auto duration = std::chrono::duration_cast<std::chrono::microseconds>( end - start ).count();
-    //printVec(nnz, outLocal, lenOutLocal);
+    diff = end-midpoint;
 
-    //printLens(nnz, lenOutLocal);
-
-
-
-    std::cout << "Filled matrix of " << nnz << " items in " << duration << " microseconds"  << endl;
-
-
-    //printMat(nnz, matLocal, matRowLocal, matColLocal);
-    //and print
-    //printVec(2, outLoc, lenOut);
-
-
-    cout << "Saved to " << "output.dat" << endl;
+    std::cout << "Time required for cc: " << diff.count() << " s\n";
 
 
     return 0;
