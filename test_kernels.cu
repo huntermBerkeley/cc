@@ -13,6 +13,18 @@
 #include <chrono>
 //Init cuda here
 
+#define CUDA_CHECK(ans)                                                                  \
+        gpuAssert((ans), __FILE__, __LINE__);
+inline void gpuAssert(cudaError_t code, const char* file, int line, bool abort = true)
+{
+	if (code != cudaSuccess)
+	{
+		printf("GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
+		if (abort)
+			exit(code);
+}
+}
+
 
 
 // __device__ void VecTest(float * A, float* B, size_t n){
@@ -242,7 +254,25 @@ __global__ void print_mappings(uint64_t maxOut, uint64_t * contig_map, uint64_t 
 
 }
 
+__host__ void printBuftype(std::string bufname, void* buffer){
 
+  cudaPointerAttributes bufStats;
+  CUDA_CHECK(cudaPointerGetAttributes(&bufStats, buffer));
+
+  cout << "buffer " << bufname << " of type ";
+
+  if (bufStats.type == cudaMemoryTypeUnregistered) cout << "unregistered";
+  else if (bufStats.type == cudaMemoryTypeHost) cout << "Host";
+  else if (bufStats.type == cudaMemoryTypeDevice) cout << "Device";
+  else if (bufStats.type == cudaMemoryTypeManaged) cout << "Managed";
+  else cout << "failure on type somehow";
+
+  cout << endl;
+
+}
+
+//this is bad - google cuda heap allocation vs cudaMalloc to learn more
+//basically this creates memory that is unusable by host
 __global__ void mallocContigs(uint64_t maxOut, char ** final_contigs, uint64_t * contig_map_lens){
 
   uint64_t tid = threadIdx.x +  blockIdx.x*blockDim.x;
@@ -258,6 +288,39 @@ __global__ void mallocContigs(uint64_t maxOut, char ** final_contigs, uint64_t *
   final_contigs[tid] = temp_contig;
 
 
+}
+
+
+//this should work better - create host version and malloc over
+__host__ void mallocHostContigs(uint64_t maxOut, char ** final_contigs, uint64_t * contig_map_lens){
+
+  char ** host_final_contigs;
+  cudaMallocHost((void **)&host_final_contigs,maxOut*sizeof(char * ));
+
+  uint64_t * _lens; // = (uint64_t *) malloc(maxOut*sizeof(uint64_t));
+  CUDA_CHECK(cudaMallocHost((void **)&_lens,maxOut*sizeof(uint64_t)));
+
+  CUDA_CHECK(cudaMemcpy(_lens, contig_map_lens, maxOut*sizeof(uint64_t), cudaMemcpyDeviceToHost));
+
+
+  for (uint64_t tid =0; tid < maxOut; tid++){
+
+
+    char * temp_contig;
+
+    CUDA_CHECK(cudaMalloc((void **)&temp_contig,_lens[tid]*sizeof(char)));
+    CUDA_CHECK(cudaMemset(temp_contig, 'F', _lens[tid]*sizeof(char)));
+    //allocate device_side memory
+
+
+    host_final_contigs[tid] = temp_contig;
+
+  }
+
+  CUDA_CHECK(cudaMemcpy(final_contigs, host_final_contigs, maxOut*sizeof(char *), cudaMemcpyHostToDevice));
+
+
+  cudaFree(host_final_contigs);
 }
 
 __global__ void freeContigs(uint64_t maxOut, char ** final_contigs){
@@ -280,6 +343,7 @@ __global__ void fill_contigs_starts(uint64_t maxOut, char ** final_contigs, char
   for (uint64_t i=0; i < startLens[tid]; i++){
 
     final_contigs[tid][i] = startVals[tid*MAX_VEC+i];
+
 
   }
 
@@ -310,20 +374,58 @@ __global__ void fill_contigs(uint64_t num_verts, char ** final_contigs, uint64_t
 
   uint64_t my_index_contig = contig_map[tidy];
 
-  printf("Thread %llu, %llu launching, comp %llu, %llu with len %llu\n", tid, tidy, my_contig, my_index_contig, contig_lens[tid]);
+  //printf("Thread %llu, %llu launching, comp %llu, %llu with len %llu\n", tid, tidy, my_contig, my_index_contig, contig_lens[tid]);
+
 
   if (my_contig != my_index_contig) return;
 
-  if (contig_lens[tid] == 0) return;
+  if (contig_lens[tid] == 0){
+    return;
+  }
 
-  printf("Vertex %llu lines up with contig %llu\n", tid, tidy);
+
+
+  //printf("Vertex %llu lines up with contig %llu\n", tid, tidy);
 
   //tidy is now the contig to access
   uint64_t my_start = contig_map_lens[tidy] - contig_index[tid];
 
+  //correct index is 593
 
+  if (my_start == 593){
+    printf("593 start here!\n" );
+  }
+
+  if (contigs[tid] != 'A' && contigs[tid] != 'C' && contigs[tid] != 'T' && contigs[tid] != 'G')
+  printf("Bad Vertex %llu inserting into slot %llu with val %c\n", tid, my_start, contigs[tid]);
 
   final_contigs[tidy][my_start] = contigs[tid];
+
+}
+
+__global__ void move_contigs_to_host(uint64_t maxOut, char** final_contigs, char** host_final_contigs, uint64_t * contig_lens){
+
+  uint64_t tid = threadIdx.x +  blockIdx.x*blockDim.x;
+
+  if (tid >= maxOut) return;
+
+  //find my id, and memcpy async
+  cudaMemcpyAsync(host_final_contigs[tid], final_contigs[tid], contig_lens[tid]*sizeof(char), cudaMemcpyDeviceToHost);
+
+
+}
+
+__global__ void check_host_contig(char * contig, uint64_t len){
+
+  uint64_t tid = threadIdx.x +  blockIdx.x*blockDim.x;
+
+  if (tid != 0) return;
+
+  printf("Dev contig from host pointer:\n");
+  for (uint64_t i = 0; i < len; i++){
+    printf("%c", contig[i]);
+  }
+  printf("\n");
 
 }
 
@@ -332,37 +434,69 @@ __host__ void save_contigs(std::string filename, uint64_t maxOut, char ** final_
 
   //the first step is to copy over the lengths, so we know how large of a buffer to allocate
 
-  uint64_t * _lens = (uint64_t *) malloc(maxOut*sizeof(uint64_t));
+  uint64_t * _lens; // = (uint64_t *) malloc(maxOut*sizeof(uint64_t));
+  CUDA_CHECK(cudaMallocHost((void **)&_lens,maxOut*sizeof(uint64_t)));
 
-  char ** host_final_contigs = (char **) malloc(maxOut*sizeof(char *));
+  char ** host_final_contigs; // = (char **) malloc(maxOut*sizeof(char *));
+  CUDA_CHECK(cudaMallocHost((void **)&host_final_contigs,maxOut*sizeof(char * )));
 
-  cudaMemcpy(_lens, final_lens, maxOut*sizeof(uint64_t), cudaMemcpyDeviceToHost);
+  CUDA_CHECK(cudaMemcpy(_lens, final_lens, maxOut*sizeof(uint64_t), cudaMemcpyDeviceToHost));
 
-  cudaMemcpy(host_final_contigs, final_contigs, maxOut*sizeof(char * ), cudaMemcpyDeviceToHost);
+  CUDA_CHECK(cudaMemcpy(host_final_contigs, final_contigs, maxOut*sizeof(char * ), cudaMemcpyDeviceToHost));
+  cudaDeviceSynchronize();
 
   std::ofstream fout;
   fout.open(filename);
 
+  printBuftype("lens", _lens);
+  printBuftype("host_final_contigs", host_final_contigs);
+
   for (uint64_t i =0 ; i < maxOut; i++){
 
-    char * buffer = (char * ) malloc(_lens[i]*sizeof(char));
+    char * buffer; //= (char * ) malloc(_lens[i]*sizeof(char));
+    CUDA_CHECK(cudaMallocHost((void **)&buffer,_lens[i]*sizeof(char)));
 
-    cudaMemcpy(buffer, host_final_contigs[i], _lens[i]*sizeof(char), cudaMemcpyDeviceToHost);
+    //buffer = host_final_contigs[i];
 
-    cudaDeviceSynchronize();
+    printBuftype("temp_buf", buffer);
+
+
+    char * cudaBuf = host_final_contigs[i];
+
+    printBuftype("host_final_contigs[i]", host_final_contigs[i]);
+    printBuftype("cudaBuf", cudaBuf);
+
+    printf("Copy size vs copy: %llu vs %llu \n", _lens[i], _lens[i]*sizeof(char));
+
+    CUDA_CHECK(cudaMemcpy(buffer, cudaBuf, _lens[i]*sizeof(char), cudaMemcpyDefault));
+
+
+    //cudaDeviceSynchronize();
+    //host final contig is still a cuda pointer
+    //so have a thread read the device memory
+    //check_host_contig<<<1,1>>>(host_final_contigs[i], _lens[i]);
+
+    //cudaDeviceSynchronize();
+    fflush(stdout);
+
+
     //file write
-    cout << "Contig:" << endl;
-    cout.write(buffer, _lens[i]);
-    cout << endl;
-    fout.write(buffer, _lens[i]);
+    cout << "Contig:" << i << " with len " << _lens[i] <<  endl;
+    for (uint64_t j=0; j < _lens[i]; j++){
+      //cout << buffer[i];
+      printf("%c", buffer[j]);
+      fout << buffer[j];
+    }
+    printf("\n");
     fout << endl;
 
+    fflush(stdout);
     //done with save
-    free(buffer);
+    cudaFree(buffer);
   }
 
-  free(_lens);
-  free(host_final_contigs);
+  cudaFree(_lens);
+  cudaFree(host_final_contigs);
 
 }
 
@@ -520,6 +654,37 @@ __global__ void len_adj_hook(uint64_t nnz, uint64_t * Arows, uint64_t * Acols, c
   char my_val = Avals[tid];
   contigs[my_index] = my_val;
   contig_lens[my_index] = 1;
+
+}
+
+//the sum of contig sections should be constant
+__global__ void count_bases(uint64_t nnz, char * contigs){
+
+  uint64_t tid = threadIdx.x +  blockIdx.x*blockDim.x;
+
+  if (tid != 0) return;
+
+  uint64_t counter = 0;
+  for (uint64_t i =0; i < nnz; i++){
+    if (contigs[i] == 'A' || contigs[i] == 'C' || contigs[i] == 'T' || contigs[i] == 'G'){
+      counter +=1;
+    }
+  }
+  printf("Conting counter: %llu\n", counter);
+
+}
+
+__global__ void sum_lens(uint64_t nnz, uint64_t * lens){
+
+  uint64_t tid = threadIdx.x +  blockIdx.x*blockDim.x;
+
+  if (tid != 0) return;
+
+  uint64_t counter = 0;
+  for (uint64_t i =0; i < nnz; i++){
+    counter += lens[i];
+  }
+  printf("lens counter: %llu\n", counter);
 
 }
 
@@ -1440,6 +1605,15 @@ void cc_len(uint64_t nnz, uint64_t num_vert, uint64_t* Arows, uint64_t* Acols, c
 
   cudaDeviceSynchronize();
 
+  //prints
+  count_bases<<<1,1>>>(num_vert, contigs);
+  sum_lens<<<1,1>>>(num_vert, contig_index);
+
+  cudaDeviceSynchronize();
+  printf("and lens\n");
+  sum_lens<<<1,1>>>(num_vert, contig_lens);
+  cudaDeviceSynchronize();
+
   auto full_setup = std::chrono::high_resolution_clock::now();
 
   std::chrono::duration<double> diff = full_setup-start;
@@ -1460,7 +1634,7 @@ void cc_len(uint64_t nnz, uint64_t num_vert, uint64_t* Arows, uint64_t* Acols, c
 
 
     //first up is the cond hook
-    len_cond_hook<<<block_vert, 1024>>>(nnz, parents, parents_holder, stars, contig_index, contig_index_holder);
+    len_cond_hook<<<block_vert, 1024>>>(num_vert, parents, parents_holder, stars, contig_index, contig_index_holder);
 
     //then swap pointers
 
@@ -1512,7 +1686,13 @@ void cc_len(uint64_t nnz, uint64_t num_vert, uint64_t* Arows, uint64_t* Acols, c
   char ** final_contigs;
   cudaMalloc((void **)&final_contigs,maxOut*sizeof(char * ));
 
-  mallocContigs<<<maxOutBlock, 1024>>>(maxOut, final_contigs, contig_map_lens);
+  //char ** host_final_contigs;
+
+  //cudaMalloc((void **)&host_final_contigs, maxOut*sizeof(char *));
+
+  mallocHostContigs(maxOut, final_contigs, contig_map_lens);
+
+  //mallocHostContigs(maxOut, host_final_contigs, contig_map_lens);
 
   //now fill contigs
   fill_contigs_starts<<<maxOutBlock, 1024>>>(maxOut, final_contigs, kmerVals, kmerLens);
@@ -1546,6 +1726,10 @@ void cc_len(uint64_t nnz, uint64_t num_vert, uint64_t* Arows, uint64_t* Acols, c
   diff = fill_end-fill_start;
 
   std::cout << "Time required to fill contig buffers: " << diff.count() << " s" << endl;
+
+  //copy over to host
+  // move_contigs_to_host<<<maxOutBlock, 1024>>>(maxOut, final_contigs,host_final_contigs, contig_map_lens);
+  // cudaDeviceSynchronize();
 
   save_contigs("cc_len.dat", maxOut, final_contigs, contig_map_lens);
   cudaDeviceSynchronize();
