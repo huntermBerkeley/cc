@@ -13,3 +13,6 @@ void iterative_cuda_solver(uint64_t nnz, uint64_t num_vert, uint64_t* Arows, uin
 
 //new solver - builds absolute position from end, then reverses and inserts into buffer
 void cc_len(uint64_t nnz, uint64_t num_vert, uint64_t* Arows, uint64_t* Acols, char* Avals, std::vector<uint64_t> outputRows, uint64_t maxOut, char*kmerVals, uint64_t*kmerLens, uint64_t * kmerParents);
+
+
+int cudaMain(int argc, char** argv);

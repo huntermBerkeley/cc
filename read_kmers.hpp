@@ -7,6 +7,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <list>
 
 #include "kmer_t.hpp"
 
@@ -77,6 +78,7 @@ std::vector<kmer_pair> read_kmers(const std::string& fname, int nprocs = 1, int 
     fclose(f);
     return kmers;
 }
+
 
 std::string extract_contig(const std::list<kmer_pair>& contig) {
     std::string contig_buf = "";

@@ -10,13 +10,16 @@ struct pkmer_t {
 
     // Get the k-kmer string, hash the k-mer.
     std::string get() const noexcept;
-    uint64_t hash() const noexcept;
+
+    __host__ __device__ uint64_t hash() const noexcept;
 
     // Various C++ lifetime stuff.
     pkmer_t(const std::string& kmer);
 
     pkmer_t() = default;
     pkmer_t(const pkmer_t& pkmer) = default;
+    pkmer_t(const char* kmer);
+
     pkmer_t& operator=(const pkmer_t& pkmer) = default;
 
     bool operator==(const pkmer_t& pkmer) const noexcept;
@@ -31,7 +34,9 @@ std::string pkmer_t::get() const noexcept {
     return std::string(kmer, KMER_LEN);
 }
 
-uint64_t pkmer_t::hash() const noexcept {
+
+
+__host__ __device__ uint64_t pkmer_t::hash() const noexcept {
     unsigned long hashval = 5381;
     for (int i = 0; i < PACKED_KMER_LEN; i++) {
         hashval = data[i] + (hashval << 5) + hashval;
@@ -40,6 +45,9 @@ uint64_t pkmer_t::hash() const noexcept {
 }
 
 pkmer_t::pkmer_t(const std::string& kmer) { packKmer(kmer.data(), data); }
+
+//new definition that takes in a char * representing string data
+__host__ __device__ pkmer_t::pkmer_t(const char* kmer) { packKmer(kmer, data); }
 
 bool pkmer_t::operator==(const pkmer_t& pkmer) const noexcept {
     return memcmp(pkmer.data, data, PACKED_KMER_LEN) == 0;

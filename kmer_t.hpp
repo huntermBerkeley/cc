@@ -23,7 +23,7 @@ struct kmer_pair {
     // Print the k-mer/fb_ext to STDOUT.
     void print() const noexcept;
 
-    uint64_t hash() const noexcept;
+    __host__ __device__ uint64_t hash() const noexcept;
 
     kmer_pair(const std::string& kmer, const std::string& fb_ext);
 
@@ -40,9 +40,9 @@ struct kmer_pair {
     bool operator!=(const kmer_pair& kmer) const noexcept;
 };
 
-char kmer_pair::forwardExt() const noexcept { return fb_ext[1]; }
+__host__ __device__ char kmer_pair::forwardExt() const noexcept { return fb_ext[1]; }
 
-char kmer_pair::backwardExt() const noexcept { return fb_ext[0]; }
+__host__ __device__ char kmer_pair::backwardExt() const noexcept { return fb_ext[0]; }
 
 std::string kmer_pair::kmer_str() const noexcept { return kmer.get(); }
 
@@ -56,11 +56,13 @@ pkmer_t kmer_pair::last_kmer() const noexcept {
     return pkmer_t(backwardExt() + kmer_str().substr(0, kmer_str().length() - 1));
 }
 
+//__host__ __device__ pkmer_t kmer_pair
+
 void kmer_pair::print() const noexcept {
     printf("%s %s\n", kmer_str().c_str(), fb_ext_str().c_str());
 }
 
-uint64_t kmer_pair::hash() const noexcept { return kmer.hash(); }
+__host__ __device__ uint64_t kmer_pair::hash() const noexcept { return kmer.hash(); }
 
 kmer_pair::kmer_pair(const std::string& kmer, const std::string& fb_ext) { init(kmer, fb_ext); }
 

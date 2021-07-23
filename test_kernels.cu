@@ -12,7 +12,39 @@
 #include <fstream>
 #include <chrono>
 //Init cuda here
+#include <thrust/device_vector.h>
+#include <thrust/host_vector.h>
+#include <thrust/transform.h>
 
+//includes needed for 
+#include <map>
+#include "read_kmers.hpp"
+#include "kmer_t.hpp"
+#include "cudaCounter.hpp"
+#include "noLock_cudaHashMap.hpp"
+
+#ifndef MAX_VEC
+#define MAX_VEC 8000
+#endif
+
+using namespace std;
+
+//struct for transform
+struct kmer_to_pkmer : public thrust::unary_function<kmer_pair,pkmer_t>
+{
+  __host__ 
+  pkmer_t operator()(kmer_pair x) { return x.next_kmer(); }
+};
+
+struct kmer_to_start : public thrust::unary_function<kmer_pair,pkmer_t>
+{
+  __host__ 
+  pkmer_t operator()(kmer_pair x) { return x.last_kmer(); }
+};
+
+
+
+#ifndef CUDA_CHECK
 #define CUDA_CHECK(ans)                                                                  \
         gpuAssert((ans), __FILE__, __LINE__);
 inline void gpuAssert(cudaError_t code, const char* file, int line, bool abort = true)
@@ -24,51 +56,466 @@ inline void gpuAssert(cudaError_t code, const char* file, int line, bool abort =
 			exit(code);
 }
 }
-
-
-
-// __device__ void VecTest(float * A, float* B, size_t n){
-//
-//   size_t tid = threadIdx.x;
-//   if (tid < n){
-//     B[N]  = A[N];
-//   }
-//
-//   __syncthreads();
-//   return;
-// }
+#endif
 
 typedef unsigned long long int uint64_cu;
 
-#ifndef MAX_VEC
-#define MAX_VEC 8000
-#endif
 
-//credit to stackoverflow
-//https://stackoverflow.com/questions/5447570/cuda-atomic-operations-on-unsigned-chars
+//copied host code for handling kmers
 
-using namespace std;
 
-// __device__ static inline char atomicCAS(char* address, char expected, char desired) {
-//     size_t long_address_modulo = (size_t) address & 3;
-//     auto* base_address = (unsigned int*) ((char*) address - long_address_modulo);
-//     unsigned int selectors[] = {0x3214, 0x3240, 0x3410, 0x4210};
-//
-//     unsigned int sel = selectors[long_address_modulo];
-//     unsigned int long_old, long_assumed, long_val, replacement;
-//     char old;
-//
-//     long_val = (unsigned int) desired;
-//     long_old = *base_address;
-//     do {
-//         long_assumed = long_old;
-//         replacement =  __byte_perm(long_old, long_val, sel);
-//         long_old = atomicCAS(base_address, long_assumed, replacement);
-//         old = (char) ((long_old >> (long_address_modulo * 8)) & 0x000000ff);
-//     } while (expected == old && long_assumed != long_old);
-//
-//     return old;
-// }
+//building off of 'perf' adj matrix
+//this constructs the matrix from first available
+//TODO: parallelize: this should be embarassingly parallel with just a tad of locking
+__host__ std::vector<std::pair<kmer_pair, uint64_t>> build_adj_mat(std::vector<kmer_pair> kmers, uint64_t * nnz, char ** vals, uint64_t ** rows, uint64_t ** cols){
+
+
+
+
+  //main kmer counter - at the end of all of this it should equal kmers.size;
+  uint64_t counter = 0;
+
+  //the map we'll need: kmer->uint64_t
+  std::map<std::string, uint64_t> kmer_to_num;
+
+  uint64_t _nnz = 0;
+
+  //start by adding all kmers to map from pkmer_t - kmer_pair
+  //no this is not very efficient O(log n) vs O(1), but this is for debugging only
+  //The original issue I suspect stems from something funky with a hash of a hash,
+  //so I would like to avoid that as much as possible.
+  for (uint64_t i = 0; i < kmers.size(); i++){
+    //printf("current: %s\n", kmers[i].kmer.get().c_str());
+    //can this be extended into the main loop?
+    if (kmers[i].forwardExt() != 'F'){
+      //valid edge!
+      _nnz +=1;
+    }
+  }
+
+  printf("Forward pass done with nnz %llu\n", _nnz);
+
+  std::vector<std::pair<kmer_pair, uint64_t>> starts;
+
+  //pass back - we want this for the next step
+  *nnz = _nnz;
+
+  //now allocate mat
+  char * _vals = new char[_nnz];
+  uint64_t * _rows = new uint64_t[_nnz];
+  uint64_t * _cols = new uint64_t[_nnz];
+  uint64_t slot = 0;
+
+  //iterate through all kmers to find starts
+  for (uint64_t i = 0; i < kmers.size(); i++){
+
+    kmer_pair next_kmer = kmers[i];
+
+    //continue on next instruction
+    //all instructions valid
+    if (next_kmer.forwardExt() == 'F') continue;
+
+
+
+    //start file write!
+
+
+    //start of the main loop
+    uint64_t my_val;
+    uint64_t next_val;
+
+    //set value of main kmer if DNE
+    if (kmer_to_num.count(next_kmer.kmer.get()) == 0){
+        kmer_to_num[next_kmer.kmer.get()] = counter;
+        counter++;
+    }
+
+    //use value stored in map
+    my_val = kmer_to_num[next_kmer.kmer.get()];
+
+    //set value of next kmer if DNE
+    if (kmer_to_num.count(next_kmer.next_kmer().get()) == 0){
+        kmer_to_num[next_kmer.next_kmer().get()] = counter;
+        counter++;
+    }
+    //spooky bug part not needed, not spooky
+
+    next_val = kmer_to_num[next_kmer.next_kmer().get()];
+
+    //mats are allocated, insert into next available slot
+    assert (slot < _nnz);
+
+    _vals[slot] = next_kmer.forwardExt();
+    _rows[slot] = my_val;
+    _cols[slot] = next_val;
+
+    //check if start
+    if (next_kmer.backwardExt() == 'F'){
+      //save to starts
+      //this info is a tad redundant, maybe reduce to just string
+      starts.push_back(std::make_pair(next_kmer, slot));
+    }
+
+    slot++;
+
+    //update kmer to the next one in the chain
+    //next_kmer = kmer_to_kmer[next_kmer.next_kmer().get()];
+
+
+
+
+
+  }
+
+  printf("Regular construct done, counter is %llu\n", counter);
+  fflush(stdout);
+
+
+  //close sample solution
+
+  //set output
+  *vals = _vals;
+  *rows = _rows;
+  *cols = _cols;
+
+  return starts;
+
+}
+
+//take the starts from a perf construction and insert them into cuda mats
+__host__ void prep_starts(std::vector<std::pair<kmer_pair, uint64_t>> starts, uint64_t * rows, uint64_t * startsNnz, char ** startVals, uint64_t** startLens, uint64_t ** startRows){
+
+
+  uint64_t _startsNnz = starts.size();
+
+  char * _startVals;
+  uint64_t * _startLens;
+  uint64_t * _startRows;
+
+  //cudaMallocManaged for debugging, replace with cudaMemcpy for speed later
+  cudaMallocManaged((void **)&_startVals, _startsNnz*MAX_VEC*sizeof(char));
+
+  cudaMallocManaged((void **)&_startLens, _startsNnz*sizeof(uint64_t));
+
+  cudaMallocManaged((void **)&_startRows, _startsNnz*sizeof(uint64_t));
+
+
+  //iterate through outKmers
+
+  for(int i=0; i < starts.size(); i++){
+
+    //can never be too safe
+    assert (i < _startsNnz);
+
+    uint64_t slot = std::get<1>(starts.at(i));
+    kmer_pair contig_start = std::get<0>(starts.at(i));
+
+    pkmer_t kmer = contig_start.kmer;
+    for(int j=0; j < kmer.get().size(); j++){
+
+      //index into the results
+      _startVals[i*MAX_VEC+j] = kmer.get()[j];
+
+
+
+    }
+    _startLens[i] = kmer.get().size();
+
+    //set parent via cond hook
+    _startRows[i] = rows[slot];
+
+
+  }
+
+
+  //done iterating, output to vecs
+  *startsNnz = _startsNnz;
+  *startVals = _startVals;
+  *startLens = _startLens;
+  *startRows = _startRows;
+
+
+}
+
+__host__ void copy_to_cuda(uint64_t nnz, char * originalVals, uint64_t * originalRows, uint64_t* originalCols, char** newVals, uint64_t ** newRows, uint64_t ** newCols){
+
+  //malloc space for cuda Arrays
+  char * _newVals;
+  uint64_t * _newRows;
+  uint64_t * _newCols;
+
+  cudaMalloc((void ** )&_newVals, nnz*sizeof(char));
+  cudaMalloc((void ** )&_newRows, nnz*sizeof(uint64_t));
+  cudaMalloc((void ** )&_newCols, nnz*sizeof(uint64_t));
+
+
+
+  //memcopys
+  cudaMemcpy(_newVals, originalVals, nnz*sizeof(char), cudaMemcpyHostToDevice);
+
+  cudaMemcpy(_newRows, originalRows, nnz*sizeof(uint64_t), cudaMemcpyHostToDevice);
+  cudaMemcpy(_newCols, originalCols, nnz*sizeof(uint64_t), cudaMemcpyHostToDevice);
+
+  *newVals = _newVals;
+  *newRows = _newRows;
+  *newCols = _newCols;
+  //throw in a syncronize just in case, this one is probably clear to remove but you never know
+  cudaDeviceSynchronize();
+}
+
+//generate a list of the vector ids to point to for output
+__host__ std::vector<uint64_t> gen_outRows(std::vector<std::pair<kmer_pair, uint64_t>> starts, uint64_t * rows){
+
+  std::vector<uint64_t> outRows;
+
+  for (int i = 0; i < starts.size(); i++){
+
+    uint64_t slot = std::get<1>(starts.at(i));
+
+    outRows.push_back(rows[slot]);
+  }
+
+  return outRows;
+
+
+}
+
+
+//have everyone attempt to insert into the hashmap
+__global__ void insert_all_onethread(uint64_t nnz, kmer_pair* kmers, cudaHashMap * map){
+
+  uint64_t tid = threadIdx.x +  blockIdx.x*blockDim.x;
+
+  if (tid != 0) return;
+
+
+  for (uint64_t i =0; i < nnz; i++){
+
+    kmer_pair my_kmer = kmers[i];
+
+    map->insert(my_kmer.kmer, i);
+
+  }
+  
+
+
+}
+
+__global__ void insert_all(uint64_t nnz, kmer_pair* kmers, cudaHashMap * map){
+
+  uint64_t tid = threadIdx.x +  blockIdx.x*blockDim.x;
+
+  if (tid >= nnz) return;
+
+  kmer_pair my_kmer = kmers[tid];
+
+  map->insert(my_kmer.kmer, tid);
+
+
+
+}
+
+__global__ void assertInserts(uint64_t nnz, kmer_pair* kmers, cudaHashMap * map){
+
+
+  uint64_t tid = threadIdx.x +  blockIdx.x*blockDim.x;
+
+  if (tid >= nnz) return;
+
+  kmer_pair my_kmer = kmers[tid];
+
+  
+  uint64_t val = map->get(my_kmer.kmer);
+
+  if (val == map->size+1){
+
+    printf("Kmer %llu failed to retreive, had val: %llu\n", tid, val);
+
+    uint64_t val2 = map->get(my_kmer.kmer);
+
+    printf("Kmer %llu val 2: %llu\n", tid, val2);
+
+
+  }
+
+
+}
+
+__global__ void assertInserts_onethread(uint64_t nnz, kmer_pair* kmers, cudaHashMap * map){
+
+
+  uint64_t tid = threadIdx.x +  blockIdx.x*blockDim.x;
+
+  if (tid !=0) return;
+
+  for (uint64_t i = 0; i < nnz; i++){
+
+
+  kmer_pair my_kmer = kmers[i];
+
+  
+  uint64_t val = map->get(my_kmer.kmer);
+
+  if (val == map->size+1){
+
+    printf("Kmer %llu failed to retreive, had val: %llu\n", i, val);
+
+    uint64_t val2 = map->get(my_kmer.kmer);
+
+    printf("Kmer %llu val 2: %llu", i, val2);
+
+
+  }
+
+}
+
+
+}
+
+//end of copied code for handlers
+
+__device__ uint16_t get_lock_nowait(uint32_t * locks, int index) {
+  //set lock to 1 to claim
+  //returns 0 if success
+  uint32_t zero = 0;
+  uint32_t one = 1;
+  return atomicCAS(&locks[index], zero, one);
+}
+
+__device__ void get_lock(uint32_t * locks, int index) { 
+  
+  uint16_t result = 1;
+
+  do {
+    result = get_lock_nowait(locks, index);
+  } while (result !=0);
+
+}
+
+__device__ void free_lock(uint32_t * locks, int index) {
+
+  //set lock to 0 to release
+  uint32_t zero = 0;
+  uint32_t one = 1;
+  //TODO: might need a __threadfence();
+  atomicCAS(&locks[index], one, zero);
+
+}
+
+__global__ void counterComp(cudaCounter * counter, uint64_t nnz, uint64_t * counter_holder, uint32_t * locks){
+
+  uint64_t tid = threadIdx.x +  blockIdx.x*blockDim.x;
+
+  if (tid >= nnz) return;
+
+  uint64_t my_val = counter->get(tid);
+
+  if (my_val > nnz) return;
+
+
+  assert(my_val < nnz+1000);
+
+  while (true){
+
+    uint16_t result = get_lock_nowait(locks, my_val);
+
+    if (result ==0){
+
+      if (counter_holder[my_val] == 0){
+
+        counter_holder[my_val] = 1;
+
+      } else {
+
+        printf("Thread %llu with val %llu received a counter to a filled index\n", tid, my_val);
+
+      }
+
+    free_lock(locks, my_val);
+
+    return;
+
+    }
+
+  }
+
+  
+
+}
+
+__global__ void counterCheck(cudaCounter * counter){
+
+  uint64_t tid = threadIdx.x +  blockIdx.x*blockDim.x;
+
+  uint64_t my_val = counter->get(tid);
+
+  //printf("%llu got val %llu\n", tid, my_val);
+
+}
+
+__global__ void counterAtomicCheck(uint64_t * counter){
+
+
+  //uint64_t tid = threadIdx.x +  blockIdx.x*blockDim.x;
+
+
+  atomicAdd((uint64_cu *) counter, 1);
+
+}
+
+//test cases for counter
+
+//how bad is a regular atomic?
+__host__ void testAtomic(){
+
+  //uint64_t nnz = 100000;
+
+  uint64_t * counter;
+
+  cudaMalloc((void **)&counter, sizeof(uint64_t));
+
+  counterAtomicCheck<<<10000000,100>>>(counter);
+}
+
+__host__ void testCounter(){
+
+  uint64_t nnz = 100000;
+
+  cudaCounter * counter;
+
+  initCounter(&counter);
+
+  uint64_t * counter_holder;
+  uint32_t * locks;
+
+  CUDA_CHECK(cudaMalloc((void**)&counter_holder, (nnz+1000)*sizeof(uint64_t)));
+  CUDA_CHECK(cudaMalloc((void**)&locks, (nnz+1000)*sizeof(uint32_t)));
+
+  CUDA_CHECK(cudaMemset(counter_holder, 0, (nnz+1000)*sizeof(uint64_t)));
+  CUDA_CHECK(cudaMemset(locks, 0, (nnz+1000)*sizeof(uint32_t)));
+
+  counterComp<<<nnz, 10>>>(counter, nnz, counter_holder, locks);
+  cudaDeviceSynchronize();
+
+  CUDA_CHECK(cudaFree(counter_holder));
+  CUDA_CHECK(cudaFree(locks));
+  freeCounter(counter);
+
+}
+
+//ask for some numbers from the counter
+__host__ void testCounterNoCheck(){
+
+
+  cudaCounter * counter;
+  initCounter(&counter);
+
+  counterCheck<<<10000000,100>>>(counter);
+
+  freeCounter(counter);
+
+}
+
 
 
 void printrowkern(uint64_t row, char * vec, uint64_t*lengths){
@@ -140,39 +587,181 @@ __global__ void mat_char_to_int(uint64_t nnz, uint64_t * Arows, uint64_t * Acols
 }
 
 
+//initialize every thread to be it's own parent
+__global__ void init_parent(uint64_t nnz,  uint64_t* parent){
 
+  uint64_t tid = threadIdx.x +  blockIdx.x*blockDim.x;
 
-__global__ void naive_cond_hook(uint64_t nnz, uint64_t * Arows, uint64_t * Acols, char * Avals, uint64_t * parent, bool * star){
+  if (tid < nnz){
+    parent[tid] = tid;
+  }
+
+}
+
+//the counter variable is significantly less than it should be - why?
+__global__ void set_parents_from_hashmap(uint64_t nnz, kmer_pair* kmers, pkmer_t * pkmers, uint64_t * parents, char * extensions, cudaHashMap * map, uint64_t * count){
 
   uint64_t tid = threadIdx.x +  blockIdx.x*blockDim.x;
 
   if (tid >= nnz) return;
 
-  uint64_t u = Arows[tid];
-  uint64_t v = Acols[tid];
+  //query myself and my parents
+  uint64_t my_slot = map->get(kmers[tid].kmer);
 
-  uint64_t parent_u = parent[u];
-  uint64_t parent_v = parent[v];
+  //this would be a bug
+  assert(my_slot != map->size+1);
+
+  //this must fail at least once - otherwise how do you know the kmer ended?
+  uint64_t my_parent = map->get(pkmers[tid]);
+  //uint64_t my_parent = map->get(kmers[tid].next_kmer());
+
+  if(my_parent != map->size+1){
 
 
-  //retreive f earlier
-  uint64_t gparent_u = parent[parent[u]];
-  uint64_t old;
 
-  //star hook procedure
-  if (star[u] && parent[u] > parent[v]){
-    old = (uint64_t) atomicCAS( (uint64_cu *) parent+parent_u, (uint64_cu) gparent_u, (uint64_cu) parent_v);
-    //if this is the case we must have succeeded
-    if (old == gparent_u){
-      return;
+    parents[my_slot] = my_parent;
+
+    extensions[my_slot] = kmers[tid].forwardExt();
+
+    if(extensions[my_slot] == 'F'){
+
+      printf("Tid failed: kmer %llu with forwardExt %c claims to have parent at %llu\n", my_slot, kmers[tid].forwardExt(), my_parent);
+      map->get(pkmers[tid]);
+
     }
-    parent_v = parent[v];
-    parent_u = parent[u];
-    gparent_u = parent[parent_u];
+
+   
+
+    return;
+
+  } else {
+
+    assert(kmers[tid].forwardExt() == 'F');
+    atomicAdd((long long unsigned int *) count, (long long unsigned int ) 1);
+
   }
 
 
 }
+
+__global__ void print_count(uint64_t * count){
+
+
+  uint64_t tid = threadIdx.x +  blockIdx.x*blockDim.x;
+
+  if (tid == 0) printf("Num starts: %llu\n", *count);
+
+}
+
+__host__ uint64_t prep_parents(uint64_t nnz, kmer_pair* kmers, pkmer_t * pkmers, uint64_t * parents, char * extensions, cudaHashMap * map){
+
+
+uint64_t blocksize = 1024;
+uint64_t num_blocks = (nnz-1)/blocksize+1;
+
+uint64_t * count;
+//this is slow but pretty convenient
+cudaMallocManaged((void **)&count, sizeof(uint64_t));
+
+count[0] = 0;
+
+//initialize every thread to be it's own parent
+init_parent<<<num_blocks, blocksize>>>(nnz, parents);
+
+
+set_parents_from_hashmap<<<num_blocks, blocksize>>>(nnz, kmers, pkmers, parents, extensions, map, count);
+
+cudaDeviceSynchronize();
+
+print_count<<<1,1>>>(count);
+
+cudaDeviceSynchronize();
+
+uint64_t to_return = *count;
+
+cudaFree(count);
+
+return to_return;
+
+}
+
+
+__global__ void find_starts_kernel(uint64_t nnz, pkmer_t * pkmers, uint64_t * starts, uint64_t * counter, cudaHashMap* hashMap){
+
+  uint64_t tid = threadIdx.x +  blockIdx.x*blockDim.x;
+
+  if (tid >= nnz) return;
+
+  if (hashMap->get(pkmers[tid]) == hashMap->size+1){
+
+    uint64_t my_index = atomicAdd((unsigned long long int  *) counter, (long long unsigned int) 1);
+
+    starts[my_index] = tid;
+
+  }
+
+
+}
+
+__host__ void find_starts_cuda(uint64_t nnz, pkmer_t * pkmers, uint64_t startNnz, uint64_t ** startIds, cudaHashMap * map){
+
+
+  uint64_t * counter;
+  uint64_t * starts;
+
+  cudaMallocManaged((void **)&counter, sizeof(uint64_t));
+  cudaMallocManaged((void **)&starts, sizeof(uint64_t)*startNnz);
+
+
+  counter[0] = 0;
+  uint64_t blocksize = 1024;
+  uint64_t num_blocks = (nnz-1)/blocksize+1;
+
+  find_starts_kernel<<<num_blocks, blocksize>>>(nnz, pkmers, starts, counter, map);
+
+
+  print_count<<<1,1>>>(counter);
+
+  cudaFree(counter);
+
+  *startIds = starts;
+
+}
+
+//discern parents from pkmers
+
+
+// __global__ void naive_cond_hook(uint64_t nnz, uint64_t * Arows, uint64_t * Acols, char * Avals, uint64_t * parent, bool * star){
+
+//   uint64_t tid = threadIdx.x +  blockIdx.x*blockDim.x;
+
+//   if (tid >= nnz) return;
+
+//   uint64_t u = Arows[tid];
+//   uint64_t v = Acols[tid];
+
+//   uint64_t parent_u = parent[u];
+//   uint64_t parent_v = parent[v];
+
+
+//   //retreive f earlier
+//   uint64_t gparent_u = parent[parent[u]];
+//   uint64_t old;
+
+//   //star hook procedure
+//   if (star[u] && parent[u] > parent[v]){
+//     old = (uint64_t) atomicCAS( (uint64_cu *) parent+parent_u, (uint64_cu) gparent_u, (uint64_cu) parent_v);
+//     //if this is the case we must have succeeded
+//     if (old == gparent_u){
+//       return;
+//     }
+//     parent_v = parent[v];
+//     parent_u = parent[u];
+//     gparent_u = parent[parent_u];
+//   }
+
+
+// }
 
 __global__ void parent_cond_hook_no_branch(uint64_t nnz, uint64_t * parent, uint64_t * parent_holder, uint64_t * gparent, bool * star, char* contigs, uint64_t * contig_lens, char* contigs_holder, uint64_t * contig_lens_holder){
 
@@ -320,7 +909,27 @@ __host__ void mallocHostContigs(uint64_t maxOut, char ** final_contigs, uint64_t
   CUDA_CHECK(cudaMemcpy(final_contigs, host_final_contigs, maxOut*sizeof(char *), cudaMemcpyHostToDevice));
 
 
-  cudaFree(host_final_contigs);
+  CUDA_CHECK(cudaFreeHost(host_final_contigs));
+}
+
+
+__host__ void freeHostContigs (uint64_t maxOut, char ** final_contigs){
+
+  char ** host_final_contigs;
+  cudaMallocHost((void **)&host_final_contigs,maxOut*sizeof(char * ));
+
+
+
+  CUDA_CHECK(cudaMemcpy(host_final_contigs, final_contigs, maxOut*sizeof(char*), cudaMemcpyDeviceToHost));
+
+  for (uint64_t i =0; i < maxOut; i++){
+    CUDA_CHECK(cudaFree(host_final_contigs[i]));
+  }
+
+  cudaDeviceSynchronize();
+
+  CUDA_CHECK(cudaFreeHost(host_final_contigs));
+
 }
 
 __global__ void freeContigs(uint64_t maxOut, char ** final_contigs){
@@ -391,14 +1000,6 @@ __global__ void fill_contigs(uint64_t num_verts, char ** final_contigs, uint64_t
   uint64_t my_start = contig_map_lens[tidy] - contig_index[tid];
 
   //correct index is 593
-
-  if (my_start == 593){
-    printf("593 start here!\n" );
-  }
-
-  if (contigs[tid] != 'A' && contigs[tid] != 'C' && contigs[tid] != 'T' && contigs[tid] != 'G')
-  printf("Bad Vertex %llu inserting into slot %llu with val %c\n", tid, my_start, contigs[tid]);
-
   final_contigs[tidy][my_start] = contigs[tid];
 
 }
@@ -448,8 +1049,8 @@ __host__ void save_contigs(std::string filename, uint64_t maxOut, char ** final_
   std::ofstream fout;
   fout.open(filename);
 
-  printBuftype("lens", _lens);
-  printBuftype("host_final_contigs", host_final_contigs);
+  // printBuftype("lens", _lens);
+  // printBuftype("host_final_contigs", host_final_contigs);
 
   for (uint64_t i =0 ; i < maxOut; i++){
 
@@ -458,15 +1059,15 @@ __host__ void save_contigs(std::string filename, uint64_t maxOut, char ** final_
 
     //buffer = host_final_contigs[i];
 
-    printBuftype("temp_buf", buffer);
+    // printBuftype("temp_buf", buffer);
 
 
     char * cudaBuf = host_final_contigs[i];
 
-    printBuftype("host_final_contigs[i]", host_final_contigs[i]);
-    printBuftype("cudaBuf", cudaBuf);
+    // printBuftype("host_final_contigs[i]", host_final_contigs[i]);
+    // printBuftype("cudaBuf", cudaBuf);
 
-    printf("Copy size vs copy: %llu vs %llu \n", _lens[i], _lens[i]*sizeof(char));
+    //printf("Copy size vs copy: %llu vs %llu \n", _lens[i], _lens[i]*sizeof(char));
 
     CUDA_CHECK(cudaMemcpy(buffer, cudaBuf, _lens[i]*sizeof(char), cudaMemcpyDefault));
 
@@ -481,22 +1082,22 @@ __host__ void save_contigs(std::string filename, uint64_t maxOut, char ** final_
 
 
     //file write
-    cout << "Contig:" << i << " with len " << _lens[i] <<  endl;
+    //cout << "Contig:" << i << " with len " << _lens[i] <<  endl;
     for (uint64_t j=0; j < _lens[i]; j++){
       //cout << buffer[i];
-      printf("%c", buffer[j]);
+      //printf("%c", buffer[j]);
       fout << buffer[j];
     }
-    printf("\n");
+    //printf("\n");
     fout << endl;
 
     fflush(stdout);
     //done with save
-    cudaFree(buffer);
+    CUDA_CHECK(cudaFreeHost(buffer));
   }
 
-  cudaFree(_lens);
-  cudaFree(host_final_contigs);
+  CUDA_CHECK(cudaFreeHost(_lens));
+  CUDA_CHECK(cudaFreeHost(host_final_contigs));
 
 }
 
@@ -506,7 +1107,7 @@ __global__ void check_contig(uint64_t contig_id, char ** final_contigs, uint64_t
 
   if (tid != 0) return;
 
-  printf("Looking at contig %llu with len %llu\n", contig_id, lens[contig_id]);
+  //printf("Looking at contig %llu with len %llu\n", contig_id, lens[contig_id]);
 
   for (uint64_t i=0; i <lens[contig_id]; i++){
     printf("%c", final_contigs[contig_id][i]);
@@ -690,36 +1291,36 @@ __global__ void sum_lens(uint64_t nnz, uint64_t * lens){
 
 //unconditional hook - this is frankly bizarre
 //and im not sure how it's 'worked' so far
-__global__ void naive_uncond_hook(uint64_t nnz, uint64_t * Arows, uint64_t * Acols, char * Avals, uint64_t * parent, bool * star){
+// __global__ void naive_uncond_hook(uint64_t nnz, uint64_t * Arows, uint64_t * Acols, char * Avals, uint64_t * parent, bool * star){
 
-  uint64_t tid = threadIdx.x +  blockIdx.x*blockDim.x;
+//   uint64_t tid = threadIdx.x +  blockIdx.x*blockDim.x;
 
-  if (tid >= nnz) return;
+//   if (tid >= nnz) return;
 
-  uint64_t u = Arows[tid];
-  uint64_t v = Acols[tid];
+//   uint64_t u = Arows[tid];
+//   uint64_t v = Acols[tid];
 
-  uint64_t parent_u = parent[u];
-  uint64_t parent_v = parent[v];
+//   uint64_t parent_u = parent[u];
+//   uint64_t parent_v = parent[v];
 
-  //retreive f earlier
-  uint64_t gparent_u = parent[parent[u]];
-  uint64_t old;
+//   //retreive f earlier
+//   uint64_t gparent_u = parent[parent[u]];
+//   uint64_t old;
 
-  //star hook procedure
-  if (star[u] && parent[u] != parent[v]){
-    old = (uint64_t) atomicCAS( (uint64_cu *) parent+parent_u, (uint64_cu) gparent_u, (uint64_cu) parent_v);
-    //if this is the case we must have succeeded
-    if (old == gparent_u){
-      return;
-    }
-    parent_v = parent[v];
-    parent_u = parent[u];
-    gparent_u = parent[parent_u];
-  }
+//   //star hook procedure
+//   if (star[u] && parent[u] != parent[v]){
+//     old = (uint64_t) atomicCAS( (uint64_cu *) parent+parent_u, (uint64_cu) gparent_u, (uint64_cu) parent_v);
+//     //if this is the case we must have succeeded
+//     if (old == gparent_u){
+//       return;
+//     }
+//     parent_v = parent[v];
+//     parent_u = parent[u];
+//     gparent_u = parent[parent_u];
+//   }
 
 
-}
+// }
 
 __global__ void shortcutting(uint64_t nnz, uint64_t * parents, uint64_t * gparents, bool * stars){
 
@@ -768,16 +1369,7 @@ __global__ void reset_star(uint64_t nnz, bool * stars){
 }
 
 
-//initialize every thread to be it's own parent
-__global__ void init_parent(uint64_t nnz,  uint64_t* parent){
 
-  uint64_t tid = threadIdx.x +  blockIdx.x*blockDim.x;
-
-  if (tid < nnz){
-    parent[tid] = tid;
-  }
-
-}
 
 //initialize lengths to be 0
 __global__ void init_contig_lens(uint64_t nnz,  uint64_t* contig_lens){
@@ -1672,6 +2264,7 @@ void cc_len(uint64_t nnz, uint64_t num_vert, uint64_t* Arows, uint64_t* Acols, c
   cudaMalloc((void **)&contig_map,maxOut*sizeof(uint64_t));
   cudaMalloc((void **)&contig_map_lens,maxOut*sizeof(uint64_t));
 
+  printf("Max output: %llu\n", maxOut);
 
   uint64_t maxOutBlock = (maxOut -1)/1024 + 1;
 
@@ -1717,9 +2310,9 @@ void cc_len(uint64_t nnz, uint64_t num_vert, uint64_t* Arows, uint64_t* Acols, c
   cudaDeviceSynchronize();
   fflush(stdout);
 
-  check_contig<<<1,1>>>(0, final_contigs, contig_map_lens);
-  cudaDeviceSynchronize();
-  fflush(stdout);
+  // check_contig<<<1,1>>>(0, final_contigs, contig_map_lens);
+  // cudaDeviceSynchronize();
+  // fflush(stdout);
 
   auto fill_end = std::chrono::high_resolution_clock::now();
 
@@ -1742,5 +2335,230 @@ void cc_len(uint64_t nnz, uint64_t num_vert, uint64_t* Arows, uint64_t* Acols, c
 
 
   //and at the end free them
-  freeContigs<<<maxOutBlock, 1024>>>(maxOut, final_contigs);
+
+  printf("before host Contigs\n");
+
+  freeHostContigs(maxOut, final_contigs);
+  cudaDeviceSynchronize();
+  printf("Error not in cc_len");
+  fflush(stdout);
+
+}
+
+
+
+
+
+
+
+
+
+__host__ int cudaMain(int argc, char** argv){
+
+  //start timing
+  auto start = std::chrono::high_resolution_clock::now();
+
+  // testAtomic();
+  // cudaDeviceSynchronize();
+  // fflush(stdout);
+
+
+  auto afterCounter = std::chrono::high_resolution_clock::now();
+
+  std::chrono::duration<double> diff = afterCounter-start;
+
+
+  std::cout << "Tested Counter in " << diff.count() << " s\n";
+
+
+
+  //prep matrix info
+  std::string kmer_fname = std::string(argv[1]);
+  int ks = kmer_size(kmer_fname);
+
+  if (ks != KMER_LEN) {
+      throw std::runtime_error("Error: " + kmer_fname + " contains " + std::to_string(ks) +
+                               "-mers, while this binary is compiled for " +
+                               std::to_string(KMER_LEN) +
+                               "-mers.  Modify packing.hpp and recompile.");
+  }
+
+    size_t n_kmers = line_count(kmer_fname);
+
+
+    std::map<string, size_t> map;
+
+    //additional map to assert that the kmer pairs aren't overlapping
+    std::map<uint64_t, kmer_pair> err_map;
+
+    //load kmers
+    std::vector<kmer_pair> kmers = read_kmers(kmer_fname);
+
+    //host pkmer setup can run asynchronously
+    thrust::host_vector<kmer_pair> host_kmers(kmers);
+
+
+    thrust::host_vector<pkmer_t> host_pkmers(host_kmers.size());
+
+    kmer_pair * host_kmers_ptr = thrust::raw_pointer_cast( host_kmers.data() );
+
+    thrust::transform(host_kmers.begin(), host_kmers.end(), host_pkmers.begin(), kmer_to_pkmer());
+
+    thrust::device_vector<pkmer_t> next_pkmers(host_pkmers);
+
+    pkmer_t * host_pkmers_ptr = thrust::raw_pointer_cast( host_pkmers.data() );
+
+    pkmer_t * dev_pkmers = thrust::raw_pointer_cast( next_pkmers.data() );
+
+    printf("host_pkmers_ptr %p  host_kmers %p\n", host_pkmers_ptr, host_kmers_ptr);
+
+    thrust::device_vector<kmer_pair> dev_kmers_vector(kmers);
+
+    kmer_pair* dev_kmers = thrust::raw_pointer_cast( dev_kmers_vector.data() );
+
+
+    auto beforeHash = std::chrono::high_resolution_clock::now();
+
+    cudaHashMap * hashMap;
+
+    hashMap = initMap(dev_kmers_vector.size());
+
+    printHashMap(hashMap);
+
+    uint64_t insert_block = (dev_kmers_vector.size() -1)/1024 + 1;
+
+    //original size:  dev_kmers_vector.size()
+    insert_all<<<insert_block, 1024>>>(dev_kmers_vector.size(), dev_kmers, hashMap);
+    cudaDeviceSynchronize();
+
+    printf("Insert completed\n");
+    fflush(stdout);
+
+
+    printHashMap(hashMap);
+
+
+    //and test correctness
+    assertInserts<<<insert_block, 1024>>>(dev_kmers_vector.size(), dev_kmers, hashMap);
+
+    
+    auto afterHash = std::chrono::high_resolution_clock::now();
+
+    diff = afterHash-beforeHash;
+    std::cout << "Hash table inserts completed in " << diff.count() << " s\n";
+
+
+    uint64_t * parents;
+    cudaMalloc((void **)& parents, dev_kmers_vector.size()*sizeof(uint64_t));
+
+    char * extensions;
+    cudaMalloc((void **)&extensions, dev_kmers_vector.size()*sizeof(char));
+
+    uint64_t num_starts = prep_parents(dev_kmers_vector.size(), dev_kmers, dev_pkmers, parents, extensions, hashMap);
+
+    printf("Num starts: %llu\n", num_starts);
+
+    
+    //get kmer leads
+    //this is more unavoidable overhead
+
+    thrust::host_vector<pkmer_t> host_leads(host_kmers.size());
+    thrust::transform(host_kmers.begin(), host_kmers.end(), host_leads.begin(), kmer_to_start());
+    thrust::device_vector<pkmer_t> leads(host_leads);
+
+ 
+    pkmer_t* lead_pointer = thrust::raw_pointer_cast( leads.data() );
+
+
+
+
+    //now construct starts
+    uint64_t startNnz = num_starts;
+    char * startVals;
+    uint64_t * startLens;
+    uint64_t * startRows;
+    uint64_t * startIds;
+
+    //locate the starts via cuda, then move to memory based on 
+    //find_starts_cuda(dev_kmers_vector.size(), lead_pointer, startNnz, &startIds, hashMap);
+
+
+    freeCudaHashMap(hashMap);
+    return 0;
+    
+    //everything after this is good but doesn't matter 
+
+    char* perfvals;
+    uint64_t * perfrows;
+    uint64_t * perfcols;
+    uint64_t perf_nnz;
+
+    std::vector<std::pair<kmer_pair, uint64_t>> perf_starts = build_adj_mat(kmers, &perf_nnz, &perfvals, &perfrows, &perfcols);
+
+    //print out some samples
+
+    // for (int i =0; i < 10; i++){
+    //   printf("%llu -> %llu: %c\n", perfrows[i], perfcols[i], perfvals[i]);
+    // }
+
+    //now run test
+    //this is successful for all runtimes
+    //build_kmers_from_adj(perf_starts, perf_nnz, perfvals, perfrows, perfcols);
+
+
+    
+
+    //fill starts mats for cuda
+    prep_starts(perf_starts, perfrows, &startNnz, &startVals, &startLens, &startRows);
+
+    //check output for verify
+    //on test case looks good
+    // printf("Visual sanity check on starts\n");
+    // int min_size = 10;
+    // if (perf_starts.size() < min_size){
+    //   min_size = perf_starts.size();
+    // }
+    // for (int i=0; i < min_size; i++){
+    //   cout << i << ": " << std::get<0>(perf_starts.at(i)).kmer_str() << endl;
+    //
+    //   cout << i << ": ";
+    //   for (int j = 0; j < 10; j++){
+    //     cout << startVals[i*MAX_VEC+j];
+    //   }
+    //   cout << endl;
+    // }
+
+    std::vector<uint64_t> outRows2 = gen_outRows(perf_starts, perfrows);
+
+    //what info needs to be updated for the next pass?
+    //sync just in case
+    cudaDeviceSynchronize();
+
+
+    char* perfvalsCuda;
+    uint64_t * perfrowsCuda;
+    uint64_t * perfcolsCuda;
+
+    copy_to_cuda(perf_nnz, perfvals, perfrows, perfcols, &perfvalsCuda, &perfrowsCuda, &perfcolsCuda);
+
+    auto midpoint = std::chrono::high_resolution_clock::now();
+
+    diff = midpoint-start;
+
+    std::cout << "Time required for setup: " << diff.count() << " s\n";
+
+    //connected components call
+    //iterative_cuda_solver(perf_nnz, n_kmers, perfrowsCuda, perfcolsCuda, perfvalsCuda, outRows2, startNnz, startVals, startLens, startRows);
+    cc_len(perf_nnz, n_kmers, perfrowsCuda, perfcolsCuda, perfvalsCuda, outRows2, startNnz, startVals, startLens, startRows);
+
+    cudaDeviceSynchronize();
+
+    auto end = std::chrono::high_resolution_clock::now();
+
+    diff = end-midpoint;
+
+    std::cout << "Time required for cc: " << diff.count() << " s\n";
+
+
+    return 0;
 }
